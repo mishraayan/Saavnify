@@ -11,14 +11,14 @@ export default defineConfig({
     VitePWA({
       registerType: "autoUpdate",
 
-      /**
-       🔥 IMPORTANT!
-       Use injectManifest so we can write our own
-       service worker (sw-push.js) → push notifications
-      */
+      // ✅ Use our own service worker with injectManifest
       strategies: "injectManifest",
-      srcDir: "src",
-      filename: "sw-push.js",
+
+      // ✅ Tell Workbox exactly where the source SW is
+      injectManifest: {
+        swSrc: "sw.js",   // source at project root
+        swDest: "sw.mjs", // output in dist/sw.mjs (different name)
+      },
 
       manifest: {
         name: "Saavnify ULTRA",
@@ -27,7 +27,6 @@ export default defineConfig({
         display: "standalone",
         background_color: "#000000",
         theme_color: "#000000",
-
         icons: [
           {
             src: "/web-app-manifest-192x192.png",
@@ -50,21 +49,13 @@ export default defineConfig({
         ],
       },
 
-      /**
-       ⚠️ DO NOT USE workbox when using injectManifest.
-       All caching rules go inside sw-push.js
-      */
       devOptions: {
-        enabled: true, // allow PWA during dev
+        enabled: true,
         type: "module",
       },
     }),
   ],
 
-  /**
-   Optional but recommended.
-   Ensures assets load correctly when deployed to subpath
-  */
   server: {
     port: 5173,
     open: true,
