@@ -2,7 +2,7 @@
    Saavnify ULTRA — Service Worker
    (Offline + Push)
 ========================= */
-[{"revision":"8e3dec784fa63bd0321889e36c51f4f0","url":"sw.js"},{"revision":"1872c500de691dce40960bb85481de07","url":"registerSW.js"},{"revision":"c59f7b8abe7791b7c2fd62c44fd92336","url":"index.html"},{"revision":null,"url":"assets/index-CrEyIeOv.css"},{"revision":null,"url":"assets/index-B7KOZm60.js"},{"revision":"52f083b29d35aae8f8b0d70fb3ab3d2f","url":"apple-touch-icon.png"},{"revision":"16ac2f099ad5012d00de19552973deed","url":"web-app-manifest-192x192.png"},{"revision":"10a3d84449ae8b163e0df9bd5589cea2","url":"web-app-manifest-512x512.png"},{"revision":"c6a740a13bee0905914e81e9ea97cdc8","url":"manifest.webmanifest"}];
+self.__WB_MANIFEST;
 
 /* ---- CACHE NAMES ---- */
 const STATIC_CACHE = "saavnify-static-v1";
@@ -142,3 +142,4 @@ self.addEventListener("notificationclick", (event) => {
       })
   );
 });
+
