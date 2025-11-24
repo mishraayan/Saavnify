@@ -92,7 +92,7 @@ function LandingScreen({ onGetStarted }) {
       <Particles
         init={async (e) => await loadFull(e)}
         options={{
-          fullScreen: { enable: false },
+          fullScreen: { enable: true },
           particles: {
             number: { value: 70 },
             size: { value: { min: 1, max: 4 } },
