@@ -17,6 +17,7 @@ import {
   User2,
   Heart,
   Share2,
+  Trash2,
 } from "lucide-react";
 
 // Your deployed JioSaavnAPI on Render
@@ -360,6 +361,7 @@ function MusicApp({ user, onLogout }) {
   };
   useEffect(() => {
     if (typeof window === "undefined") return;
+
     try {
       const params = new URLSearchParams(window.location.search);
       const shared = params.get("import");
@@ -367,15 +369,30 @@ function MusicApp({ user, onLogout }) {
 
       const data = JSON.parse(atob(shared));
       const id = crypto.randomUUID?.() || Date.now().toString();
+
       const newPl = {
         id,
         name: data.name || "Shared Playlist",
         tracks: data.tracks || [],
         createdAt: Date.now(),
       };
-      persistPlaylists([newPl, ...playlists]);
 
-      // Clean URL so import doesn't happen again
+      // 🔹 Read existing playlists directly from localStorage
+      const existingRaw = window.localStorage.getItem("saavnify_playlists");
+      let existing = [];
+      if (existingRaw) {
+        try {
+          existing = JSON.parse(existingRaw);
+        } catch {
+          existing = [];
+        }
+      }
+
+      const next = [newPl, ...existing];
+      window.localStorage.setItem("saavnify_playlists", JSON.stringify(next));
+      setPlaylists(next); // keep state in sync
+
+      // Clean URL so import doesn't run again on refresh
       params.delete("import");
       const newUrl =
         window.location.pathname +
@@ -386,7 +403,6 @@ function MusicApp({ user, onLogout }) {
     } catch (e) {
       console.error("Failed to import shared playlist:", e);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ----- LIBRARY LOAD/SAVE -----
@@ -612,6 +628,37 @@ function MusicApp({ user, onLogout }) {
     audio.currentTime = pct * audio.duration;
     setProgress(pct * 100);
   };
+  const deletePlaylist = (id) => {
+    const next = playlists.filter((pl) => pl.id !== id);
+    persistPlaylists(next);
+    if (selectedPlaylistId === id) {
+      setSelectedPlaylistId(null);
+    }
+  };
+  const removeTrackFromPlaylist = (playlistId, track) => {
+    if (!playlistId || !track) return;
+
+    persistPlaylists(
+      playlists.map((pl) => {
+        if (pl.id !== playlistId) return pl;
+
+        return {
+          ...pl,
+          tracks: pl.tracks.filter(
+            (t) =>
+              !(
+                t.id === track.id ||
+                ((t.title || "").toLowerCase() ===
+                  (track.title || "").toLowerCase() &&
+                  (t.singers || "").toLowerCase() ===
+                    (track.singers || "").toLowerCase())
+              )
+          ),
+        };
+      })
+    );
+  };
+
   const addTrackToPlaylist = (playlistId, track) => {
     if (!playlistId || !track) return;
 
@@ -901,12 +948,20 @@ function MusicApp({ user, onLogout }) {
                           {pl.tracks.length} songs
                         </p>
                       </button>
-                      <button
-                        onClick={() => handleSharePlaylist(pl)}
-                        className="mt-2 text-[11px] flex items-center gap-1 text-cyan-300 hover:text-cyan-200"
-                      >
-                        <Share2 size={14} /> Share
-                      </button>
+                      <div className="mt-2 flex items-center justify-between text-[11px]">
+                        <button
+                          onClick={() => handleSharePlaylist(pl)}
+                          className="flex items-center gap-1 text-cyan-300 hover:text-cyan-200"
+                        >
+                          <Share2 size={14} /> Share
+                        </button>
+                        <button
+                          onClick={() => deletePlaylist(pl.id)}
+                          className="flex items-center gap-1 text-rose-300 hover:text-rose-200"
+                        >
+                          <Trash2 size={14} /> Delete
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -945,9 +1000,21 @@ function MusicApp({ user, onLogout }) {
                   <p className="mt-3 font-bold text-center truncate px-2 text-sm md:text-base">
                     {track.title}
                   </p>
-                  <p className="text-xs md:text-sm text-gray-400 text-center truncate px-2 mb-3">
+                  <p className="text-xs md:text-sm text-gray-400 text-center truncate px-2">
                     {track.singers}
                   </p>
+
+                  {activeTab === "library" && selectedPlaylistId && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation(); // don't open player
+                        removeTrackFromPlaylist(selectedPlaylistId, track);
+                      }}
+                      className="mb-3 mt-1 mx-auto text-[11px] flex items-center gap-1 text-rose-300 hover:text-rose-200"
+                    >
+                      <Trash2 size={14} /> Remove
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
