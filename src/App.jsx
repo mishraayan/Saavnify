@@ -92,7 +92,7 @@ function LandingScreen({ onGetStarted }) {
       <Particles
         init={async (e) => await loadFull(e)}
         options={{
-          fullScreen: { enable: true },
+          fullScreen: { enable: true, zIndex: -1 },
           particles: {
             number: { value: 70 },
             size: { value: { min: 1, max: 4 } },
@@ -1547,7 +1547,8 @@ function MusicApp({ user, onLogout }) {
                   style={{ boxShadow: `0 0 90px ${theme.primary}aa` }}
                 />
               ) : (
-                <div className="mt-[-40px] md:mt-[-56px] lg:mt-[-72px] relative w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem] flex items-center justify-center">
+                <div className="relative flex items-center justify-center w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem]">
+
                   <Particles
                     init={particlesInit}
                     className="absolute inset-0"
