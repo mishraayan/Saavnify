@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import Particles from "@tsparticles/react";
 import { loadFull } from "tsparticles";
+import { supabase } from "./lib/supabase";
 import {
   Download,
   Play,
@@ -75,7 +76,11 @@ function adaptSongs(data) {
       image_url:
         (song.image || song.image_url || "").replace("150x150", "500x500") ||
         "https://via.placeholder.com/500",
-      url: song.url || song.media_url,
+      url:
+        song.url ||
+        song.media_url ||
+        song.downloadUrl?.[song.downloadUrl.length - 1]?.url,
+      duration: song.duration || 0, // ← ADD THIS LINE
     }))
     .filter((t) => t.url);
 }
@@ -316,6 +321,7 @@ function MusicApp({ user, onLogout }) {
   const [playlists, setPlaylists] = useState([]);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState(null);
   const [playlistModalTrack, setPlaylistModalTrack] = useState(null);
+  const [lyricsLoading, setLyricsLoading] = useState(false);
 
   const audioRef = useRef(new Audio());
   // Restore playback state on load
@@ -342,6 +348,85 @@ function MusicApp({ user, onLogout }) {
       console.log("Failed to restore playback:", e);
     }
   }, []);
+  // helper to uniquely identify a track (for comments/downloads)
+  const trackKey = (track) =>
+    track
+      ? `${(track.title || "").toLowerCase().trim()}|${(track.singers || "")
+          .toLowerCase()
+          .trim()}`
+      : "";
+
+  // 👇 NEW STATE
+  const [lyrics, setLyrics] = useState(null);
+  const [syncedLyrics, setSyncedLyrics] = useState(null);
+  const [currentLyricIndex, setCurrentLyricIndex] = useState(0);
+
+  // === SUPABASE SETUP ===
+
+  // === SUPABASE REAL-TIME COMMENTS (GLOBAL) ===
+
+  // === SUPABASE REAL-TIME COMMENTS (GLOBAL) ===
+  const [comments, setComments] = useState({});
+  const [newComment, setNewComment] = useState("");
+
+  // Load comments when song changes
+  useEffect(() => {
+    if (!currentTrack) return;
+    const key = trackKey(currentTrack);
+
+    supabase
+      .from("comments")
+      .select("*")
+      .eq("track_key", key)
+      .order("created_at", { ascending: false })
+      .then(({ data }) => {
+        setComments((prev) => ({ ...prev, [key]: data || [] }));
+      });
+  }, [currentTrack]);
+
+  // Real-time listener
+  useEffect(() => {
+    const channel = supabase
+      .channel("comments-channel")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "comments" },
+        (payload) => {
+          const newMsg = payload.new;
+          setComments((prev) => ({
+            ...prev,
+            [newMsg.track_key]: [newMsg, ...(prev[newMsg.track_key] || [])],
+          }));
+        }
+      )
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
+  }, [supabase]);
+
+  // Send comment
+  const sendComment = async () => {
+    const text = newComment.trim();
+    if (!text || !currentTrack) return;
+
+    const { error } = await supabase.from("comments").insert({
+      track_key: trackKey(currentTrack),
+      text,
+      name: user?.name || "Guest", // 👈 use signup name here
+    });
+
+    if (error) {
+      console.error("Comment failed:", error);
+    } else {
+      setNewComment("");
+    }
+  };
+
+  const [offline, setOffline] = useState(
+    typeof navigator !== "undefined" ? !navigator.onLine : false
+  );
+
+  const [downloadedTracks, setDownloadedTracks] = useState([]);
 
   // Load playlists from localStorage
   useEffect(() => {
@@ -359,6 +444,68 @@ function MusicApp({ user, onLogout }) {
     setPlaylists(next);
     localStorage.setItem("saavnify_playlists", JSON.stringify(next));
   };
+  // Parse LRC format → [{ time: 12.34, text: "Hello world" }]
+  const parseLrc = (lrc) => {
+    if (!lrc) return null;
+
+    const lines = lrc.trim().split("\n");
+    const result = [];
+
+    for (let line of lines) {
+      line = line.trim();
+      if (!line) continue;
+
+      // Match all timestamp formats: [mm:ss.xx], [m:ss.xx], [ss.xx], [123.45]
+      const matches = [
+        ...line.matchAll(/\[(\d+:)?(\d+)[:.](\d{1,3})\]|\[(\d+\.\d{1,3})\]/g),
+      ];
+      if (matches.length === 0) continue;
+
+      let text = line;
+      let earliestTime = Infinity;
+
+      for (const match of matches) {
+        text = text.replace(match[0], "").trim();
+
+        let time;
+        if (match[4]) {
+          time = parseFloat(match[4]);
+        } else {
+          const mins = parseInt(match[1] || "0", 10);
+          const secs = parseFloat(
+            match[2] + "." + (match[3] || "0").padEnd(3, "0")
+          );
+          time = mins * 60 + secs;
+        }
+        earliestTime = Math.min(earliestTime, time);
+      }
+
+      // THIS IS THE KEY: Keep line even if text is empty — it's a timing marker!
+      result.push({
+        time: earliestTime,
+        text: text || "", // ← allow empty strings!
+      });
+    }
+
+    // Sort by time and remove exact duplicates only
+    result.sort((a, b) => a.time - b.time);
+    const seen = new Set();
+    const filtered = result.filter((item) => {
+      const key = `${item.time.toFixed(3)}|${item.text}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    return filtered.length > 0 ? filtered : null;
+  };
+  useEffect(() => {
+    if (showPlayer) {
+      // make sure the overlay starts from the top
+      window.scrollTo({ top: 0, behavior: "instant" });
+    }
+  }, [showPlayer]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -405,6 +552,96 @@ function MusicApp({ user, onLogout }) {
     }
   }, []);
 
+  // load downloaded track metadata
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("saavnify_downloads");
+      if (saved) setDownloadedTracks(JSON.parse(saved));
+    } catch {
+      setDownloadedTracks([]);
+    }
+  }, []);
+
+  // online / offline watcher
+  useEffect(() => {
+    const goOnline = () => setOffline(false);
+    const goOffline = () => setOffline(true);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
+  useEffect(() => {
+    if (!currentTrack) {
+      setLyrics(null);
+      setSyncedLyrics(null);
+      setLyricsLoading(false);
+      return;
+    }
+
+    setLyricsLoading(true);
+
+    const fetchLyrics = async () => {
+      const title = currentTrack.title?.trim();
+      const artist = currentTrack.singers?.trim();
+
+      // Some tracks have no duration → don’t send duration=0
+      const durationSec =
+        currentTrack.duration > 0
+          ? Math.floor(currentTrack.duration / 1000)
+          : undefined;
+
+      if (!title || !artist) {
+        setLyrics("Lyrics not available");
+        setSyncedLyrics(null);
+        return;
+      }
+
+      // ─── 1. lrclib – best synced + plain lyrics (free, fast, works for Bollywood)
+      try {
+        const params = { track_name: title, artist_name: artist };
+        if (durationSec) params.duration = durationSec; // ← only add if we have a real value
+
+        const res = await axios.get("https://lrclib.net/api/get", {
+          params,
+          timeout: 8000,
+        });
+
+        if (res.data?.id) {
+          const plain = res.data.plainLyrics?.trim();
+          const synced = res.data.syncedLyrics?.trim();
+          setLyrics(plain || synced || "No lyrics found");
+          setSyncedLyrics(synced ? parseLrc(synced) : null);
+          return;
+        }
+      } catch {
+        // ignore – just try next source
+      }
+
+      // ─── 2. lyrics.ovh – plain lyrics, very reliable fallback
+      try {
+        const res = await axios.get(
+          `https://api.lyrics.ovh/v1/${encodeURIComponent(
+            artist
+          )}/${encodeURIComponent(title)}`
+        );
+        setLyrics(res.data.lyrics || "No lyrics found");
+        setSyncedLyrics(null);
+        return;
+      } catch {
+        // ignore
+      }
+
+      // ─── 3. If everything failed
+      setLyrics("Lyrics not available");
+      setSyncedLyrics(null);
+    };
+
+    fetchLyrics().finally(() => setLyricsLoading(false));
+  }, [currentTrack]);
+
   // ----- LIBRARY LOAD/SAVE -----
   useEffect(() => {
     const saved = localStorage.getItem("saavnify_library");
@@ -431,6 +668,17 @@ function MusicApp({ user, onLogout }) {
           (t.singers || "").toLowerCase() ===
             (track.singers || "").toLowerCase())
     );
+  };
+
+  // downloads persistence
+  const persistDownloads = (next) => {
+    setDownloadedTracks(next);
+    localStorage.setItem("saavnify_downloads", JSON.stringify(next));
+  };
+
+  const isDownloaded = (track) => {
+    const key = trackKey(track);
+    return downloadedTracks.some((t) => trackKey(t) === key);
   };
 
   const toggleLike = (track) => {
@@ -546,6 +794,16 @@ function MusicApp({ user, onLogout }) {
       setLoading(false); // 👈 stop spinner
     }
   };
+  const activeLyricRef = useRef(null);
+
+  useEffect(() => {
+    if (activeLyricRef.current) {
+      activeLyricRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }
+  }, [currentLyricIndex]);
 
   useEffect(() => {
     searchSongs();
@@ -613,10 +871,17 @@ function MusicApp({ user, onLogout }) {
     const a = document.createElement("a");
     a.href = currentTrack.url;
     a.download = `${currentTrack.title} - ${currentTrack.singers}.mp3`;
+    a.target = "_blank"; // optional: open in new tab
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+
+    // mark as downloaded in your own state
+    const key = trackKey(currentTrack);
+    const filtered = downloadedTracks.filter((t) => trackKey(t) !== key);
+    persistDownloads([currentTrack, ...filtered]);
   };
+
   const handleSeek = (event) => {
     const audio = audioRef.current;
     if (!audio || !audio.duration) return;
@@ -695,6 +960,19 @@ function MusicApp({ user, onLogout }) {
       if (!audio.duration) return;
       const pct = (audio.currentTime / audio.duration) * 100 || 0;
       setProgress(pct);
+
+      // 🔹 karaoke sync if we have timestamps
+      if (syncedLyrics && syncedLyrics.length > 0) {
+        const t = audio.currentTime;
+        const idx = syncedLyrics.findIndex((line, i) => {
+          const nextTime =
+            i === syncedLyrics.length - 1 ? Infinity : syncedLyrics[i + 1].time;
+          return t >= line.time && t < nextTime;
+        });
+        if (idx !== -1 && idx !== currentLyricIndex) {
+          setCurrentLyricIndex(idx);
+        }
+      }
 
       // Save compact playback state
       if (currentTrack) {
@@ -854,6 +1132,13 @@ function MusicApp({ user, onLogout }) {
               </button>
             </div>
           </header>
+          {offline && (
+            <div className="mx-4 mt-3 mb-2 rounded-2xl bg-yellow-500/10 border border-yellow-400/40 text-yellow-200 text-xs px-4 py-2 flex items-center justify-between">
+              <span>
+                Offline mode: only downloaded / cached tracks will work.
+              </span>
+            </div>
+          )}
 
           {/* Hero section (desktop, only for home) */}
           {activeTab === "home" && (
@@ -1207,7 +1492,7 @@ function MusicApp({ user, onLogout }) {
 
       {/* FULL PLAYER */}
       {showPlayer && currentTrack && (
-        <div className="fixed inset-0 bg-black text-white overflow-hidden">
+        <div className="fixed inset-0 bg-black text-white overflow-y-auto">
           {/* Background particles */}
           <Particles
             init={particlesInit}
@@ -1224,8 +1509,13 @@ function MusicApp({ user, onLogout }) {
               },
             }}
           />
+          {offline && (
+            <div className="absolute left-1/2 -translate-x-1/2 top-16 md:top-6 bg-yellow-500/20 border border-yellow-400/60 text-yellow-100 rounded-full px-4 py-1 text-[11px] z-40 ">
+              Offline — streaming may fail, but your downloads are safe.
+            </div>
+          )}
 
-          <div className="absolute inset-0 flex flex-col md:flex-row md:items-center md:justify-center p-4 md:p-10 gap-8 md:gap-12">
+          <div className="relative min-h-screen flex flex-col md:flex-row items-start md:items-start justify-center md:justify-between px-4 md:px-10 py-6 md:py-10 gap-8 md:gap-12">
             <button
               onClick={() => setShowPlayer(false)}
               className="absolute top-4 right-4 md:top-8 md:right-8 z-50 hover:scale-110 transition-transform"
@@ -1234,11 +1524,12 @@ function MusicApp({ user, onLogout }) {
             </button>
 
             {/* LEFT: Visualizer */}
-            <div className="flex-1 flex flex-col items-center justify-center">
+            <div className="flex-1 flex flex-col items-center justify-start pb-10  ">
               <button
-                onClick={() =>
-                  setVisualMode((m) => (m === "cover" ? "sphere" : "cover"))
-                }
+                onClick={() => {
+                  setVisualMode((m) => (m === "cover" ? "sphere" : "cover"));
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
                 className="absolute top-4 left-4 md:top-8 md:left-8 z-50 px-4 py-2 rounded-full bg-white/10 border border-white/30 text-xs md:text-sm hover:bg-white/20 transition"
               >
                 {visualMode === "cover"
@@ -1253,18 +1544,15 @@ function MusicApp({ user, onLogout }) {
                   className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-3xl shadow-4xl border-8 border-white/20 object-cover ${
                     isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
                   }`}
-                  style={{
-                    boxShadow: `0 0 90px ${theme.primary}aa`,
-                  }}
+                  style={{ boxShadow: `0 0 90px ${theme.primary}aa` }}
                 />
               ) : (
-                <div className="relative w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem] flex items-center justify-center">
-                  {/* 3D-ish sphere particle wave (visually beat-like) */}
+                <div className="mt-[-40px] md:mt-[-56px] lg:mt-[-72px] relative w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem] flex items-center justify-center">
                   <Particles
                     init={particlesInit}
                     className="absolute inset-0"
                     options={{
-                      fullScreen: { enable: false },
+                      fullScreen: { enable: true},
                       background: { color: "transparent" },
                       fpsLimit: 60,
                       particles: {
@@ -1304,9 +1592,7 @@ function MusicApp({ user, onLogout }) {
                   />
                   <div
                     className="absolute inset-6 rounded-full"
-                    style={{
-                      border: `1px solid ${theme.secondary}99`,
-                    }}
+                    style={{ border: `1px solid ${theme.secondary}99` }}
                   />
                   <div
                     className="relative w-32 h-32 md:w-40 md:h-40 rounded-full flex flex-col items-center justify-center text-center px-4"
@@ -1337,6 +1623,7 @@ function MusicApp({ user, onLogout }) {
                 {currentTrack.singers}
               </p>
 
+              {/* Seek bar */}
               <div
                 className="w-64 md:w-80 h-2 bg-white/20 rounded-full mt-6 overflow-hidden cursor-pointer"
                 onClick={handleSeek}
@@ -1350,8 +1637,9 @@ function MusicApp({ user, onLogout }) {
                 />
               </div>
 
-              <div className="mt-7 flex flex-col items-center gap-4 w-full">
-                {/* MAIN TRANSPORT CONTROLS (centered) */}
+              {/* CONTROLS FIRST */}
+              <div className="sticky top-0 bg-black/80 backdrop-blur-lg pt-6 pb-4">
+                {/* Main transport controls */}
                 <div className="flex items-center justify-center gap-6 text-2xl md:text-3xl">
                   <button
                     onClick={playPrev}
@@ -1379,7 +1667,7 @@ function MusicApp({ user, onLogout }) {
                   </button>
                 </div>
 
-                {/* SECONDARY CONTROLS (also centered) */}
+                {/* Secondary controls */}
                 <div className="flex items-center justify-center gap-8 text-xl md:text-2xl">
                   <button
                     onClick={handleHeartClick}
@@ -1403,9 +1691,14 @@ function MusicApp({ user, onLogout }) {
                   >
                     <Shuffle />
                   </button>
+
                   <button
                     onClick={handleDownloadCurrent}
-                    className="transition text-gray-300 hover:text-cyan-400 hover:scale-110"
+                    className={`transition ${
+                      isDownloaded(currentTrack)
+                        ? "text-green-400"
+                        : "text-gray-300 hover:text-cyan-400"
+                    }`}
                   >
                     <Download size={24} />
                   </button>
@@ -1420,10 +1713,139 @@ function MusicApp({ user, onLogout }) {
                   </button>
                 </div>
               </div>
+
+              {/* Lyrics / Karaoke */}
+              <div className="mt-5 w-full max-w-md h-52 md:h-60 bg-white/5 border border-white/10 rounded-2xl p-4 overflow-y-auto text-center">
+                {lyricsLoading ? (
+                  <div className="flex items-center justify-center h-full gap-2">
+                    <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                    <span className="text-gray-400 text-sm">
+                      Searching lyrics...
+                    </span>
+                  </div>
+                ) : syncedLyrics && syncedLyrics.length > 0 ? (
+                  syncedLyrics.map((line, i) => (
+                    <p
+                      key={i}
+                      ref={i === currentLyricIndex ? activeLyricRef : null}
+                      className={`my-2 transition-all duration-300 ${
+                        i === currentLyricIndex
+                          ? "text-cyan-300 font-bold text-lg"
+                          : i === currentLyricIndex - 1 ||
+                            i === currentLyricIndex + 1
+                          ? "text-gray-300"
+                          : "text-gray-500 text-sm"
+                      }`}
+                    >
+                      {line.text || "♪"}
+                    </p>
+                  ))
+                ) : lyrics ? (
+                  lyrics.split("\n").map((l, i) => (
+                    <p key={i} className="my-1 text-gray-300">
+                      {l || "♪"}
+                    </p>
+                  ))
+                ) : (
+                  <p className="text-gray-500">
+                    No lyrics found for this track
+                  </p>
+                )}
+              </div>
+              {/* Mini social / comments */}
+
+              <div className="mt-8 w-full max-w-md bg-gradient-to-br from-[#0a0a0f] to-[#0b0c12] border border-white/10 rounded-3xl p-5 pb-6 backdrop-blur-2xl shadow-[0_0_40px_#00000060]">
+                {/* Header */}
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-2xl font-black bg-gradient-to-r from-cyan-400 via-blue-300 to-purple-500 bg-clip-text text-transparent">
+                      Community Vibes
+                    </h3>
+                    <span className="relative flex">
+                      <span className="absolute inline-flex h-3 w-3 rounded-full bg-emerald-400 opacity-75 animate-ping"></span>
+                      <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-400"></span>
+                    </span>
+                  </div>
+
+                  <span className="text-xs font-semibold text-cyan-300 bg-white/10 px-3 py-1 rounded-full flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-cyan-300" />
+                    {(comments[trackKey(currentTrack)] || []).length}{" "}
+                    {(comments[trackKey(currentTrack)] || []).length === 1
+                      ? "vibe"
+                      : "vibes"}
+                  </span>
+                </div>
+
+                {/* Comments */}
+                <div className="max-h-60 overflow-y-auto space-y-3 mb-4 pr-1 custom-scrollbar">
+                  {(comments[trackKey(currentTrack)] || []).length === 0 ? (
+                    <div className="text-center py-10 animate-[fadeIn_0.4s_ease-out]">
+                      <p className="text-gray-400 text-sm">No vibes yet</p>
+                      <p className="text-gray-500 text-xs mt-1">
+                        Be the first one ✨
+                      </p>
+                    </div>
+                  ) : (
+                    comments[trackKey(currentTrack)].map((c) => (
+                      <div
+                        key={c.id}
+                        className="flex gap-3 animate-[fadeInUp_0.25s_ease-out] [animation-fill-mode:backwards]"
+                      >
+                        {/* Avatar */}
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-pink-500 via-purple-500 to-cyan-500 flex items-center justify-center font-bold shadow-md">
+                          {(c.name?.charAt(0) || "?").toUpperCase()}
+                        </div>
+
+                        {/* Bubble */}
+                        <div className="flex-1 bg-black/40 rounded-2xl px-4 py-3 border border-white/5 hover:bg-black/60 hover:border-cyan-400/30 transition-all duration-150">
+                          <div className="flex justify-between items-center">
+                            <p className="text-cyan-300 font-semibold text-sm">
+                              {c.name || "Guest"}
+                            </p>
+                            <span className="text-[10px] text-gray-500">
+                              {new Date(c.created_at).toLocaleTimeString([], {
+                                hour: "numeric",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                          </div>
+                          <p className="text-gray-200 text-sm mt-1 leading-snug">
+                            {c.text}
+                          </p>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* 🔥 Input INSIDE the card */}
+                <div className="flex items-center gap-3 w-full">
+                  <input
+                    type="text"
+                    value={newComment}
+                    onChange={(e) => setNewComment(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        sendComment();
+                      }
+                    }}
+                    placeholder="This song hits different when..."
+                    className="flex-1 bg-black/30 rounded-2xl px-4 py-3 text-sm border border-white/10 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-400 transition-all"
+                  />
+                  <button
+                    onClick={sendComment}
+                    disabled={!newComment.trim()}
+                    className="px-6 py-2 rounded-2xl text-sm font-semibold text-white bg-gradient-to-r from-cyan-500 to-purple-600 shadow-lg hover:scale-105 active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Send
+                  </button>
+                </div>
+              </div>
             </div>
 
             {/* RIGHT: QUEUE LIST (UP NEXT) */}
-            <div className="w-full md:w-72 lg:w-80 bg-black/60 border border-white/10 rounded-3xl p-4 md:p-5 backdrop-blur-xl max-h-[70vh] overflow-y-auto">
+            <div className="w-full md:w-72 lg:w-80 bg-black/60 border border-white/10 rounded-3xl p-4 md:p-5 backdrop-blur-xl mt-6 md:mt-0 max-h-[60vh] md:max-h-[70vh] overflow-y-auto">
               <h2 className="text-lg font-semibold mb-3">Up Next</h2>
               {upNext.length === 0 && (
                 <p className="text-sm text-gray-400">
@@ -1541,4 +1963,4 @@ function urlBase64ToUint8Array(base64String) {
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
   const rawData = atob(base64);
   return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
-}
+} 
