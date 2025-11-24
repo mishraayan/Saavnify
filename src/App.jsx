@@ -16,6 +16,7 @@ import {
   Library as LibraryIcon,
   User2,
   Heart,
+  Share2,
 } from "lucide-react";
 
 // Your deployed JioSaavnAPI on Render
@@ -268,6 +269,33 @@ function SearchScreen({
     </div>
   );
 }
+function NewPlaylistForm({ onCreate }) {
+  const [name, setName] = useState("");
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!name.trim()) return;
+        onCreate(name);
+      }}
+      className="mt-2 space-y-2"
+    >
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="New playlist name"
+        className="w-full px-3 py-2 rounded-xl bg-white/10 border border-white/20 text-sm focus:outline-none focus:border-cyan-400"
+      />
+      <button
+        type="submit"
+        className="w-full px-3 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-sm font-semibold"
+      >
+        Create & add song
+      </button>
+    </form>
+  );
+}
 
 // ---------- MAIN MUSIC APP ----------
 function MusicApp({ user, onLogout }) {
@@ -284,6 +312,9 @@ function MusicApp({ user, onLogout }) {
   const [searchQuery, setSearchQuery] = useState("arijit singh");
   const [activeTab, setActiveTab] = useState("home"); // home, search, library, account
   const [loading, setLoading] = useState(false);
+  const [playlists, setPlaylists] = useState([]);
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState(null);
+  const [playlistModalTrack, setPlaylistModalTrack] = useState(null);
 
   const audioRef = useRef(new Audio());
   // Restore playback state on load
@@ -309,6 +340,53 @@ function MusicApp({ user, onLogout }) {
     } catch (e) {
       console.log("Failed to restore playback:", e);
     }
+  }, []);
+
+  // Load playlists from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("saavnify_playlists");
+      if (saved) {
+        setPlaylists(JSON.parse(saved));
+      }
+    } catch {
+      setPlaylists([]);
+    }
+  }, []);
+
+  const persistPlaylists = (next) => {
+    setPlaylists(next);
+    localStorage.setItem("saavnify_playlists", JSON.stringify(next));
+  };
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const shared = params.get("import");
+      if (!shared) return;
+
+      const data = JSON.parse(atob(shared));
+      const id = crypto.randomUUID?.() || Date.now().toString();
+      const newPl = {
+        id,
+        name: data.name || "Shared Playlist",
+        tracks: data.tracks || [],
+        createdAt: Date.now(),
+      };
+      persistPlaylists([newPl, ...playlists]);
+
+      // Clean URL so import doesn't happen again
+      params.delete("import");
+      const newUrl =
+        window.location.pathname +
+        (params.toString() ? `?${params.toString()}` : "");
+      window.history.replaceState({}, "", newUrl);
+
+      alert(`Playlist "${newPl.name}" imported to your Library`);
+    } catch (e) {
+      console.error("Failed to import shared playlist:", e);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ----- LIBRARY LOAD/SAVE -----
@@ -355,6 +433,33 @@ function MusicApp({ user, onLogout }) {
       persistLibrary(next);
     } else {
       persistLibrary([track, ...library]);
+    }
+  };
+  const handleSharePlaylist = (pl) => {
+    if (!pl) return;
+    const payload = {
+      name: pl.name,
+      tracks: (pl.tracks || []).map((t) => ({
+        id: t.id,
+        title: t.title,
+        singers: t.singers,
+        image_url: t.image_url,
+        url: t.url,
+      })),
+    };
+
+    try {
+      const encoded = btoa(JSON.stringify(payload));
+      const link = `${window.location.origin}?import=${encodeURIComponent(
+        encoded
+      )}`;
+      navigator.clipboard
+        .writeText(link)
+        .then(() => alert("Playlist link copied to clipboard!"))
+        .catch(() => alert(link));
+    } catch (e) {
+      console.error(e);
+      alert("Unable to generate share link.");
     }
   };
 
@@ -486,6 +591,55 @@ function MusicApp({ user, onLogout }) {
       setIsPlaying(false);
     }
   };
+  const handleDownloadCurrent = () => {
+    if (!currentTrack || !currentTrack.url) return;
+
+    const a = document.createElement("a");
+    a.href = currentTrack.url;
+    a.download = `${currentTrack.title} - ${currentTrack.singers}.mp3`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+  const handleSeek = (event) => {
+    const audio = audioRef.current;
+    if (!audio || !audio.duration) return;
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const clickX = event.clientX - rect.left;
+    const pct = Math.min(Math.max(clickX / rect.width, 0), 1); // clamp 0–1
+
+    audio.currentTime = pct * audio.duration;
+    setProgress(pct * 100);
+  };
+  const addTrackToPlaylist = (playlistId, track) => {
+    if (!playlistId || !track) return;
+
+    persistPlaylists(
+      playlists.map((pl) => {
+        if (pl.id !== playlistId) return pl;
+        const exists = pl.tracks.some(
+          (t) =>
+            t.id === track.id ||
+            ((t.title || "").toLowerCase() ===
+              (track.title || "").toLowerCase() &&
+              (t.singers || "").toLowerCase() ===
+                (track.singers || "").toLowerCase())
+        );
+        return exists ? pl : { ...pl, tracks: [track, ...pl.tracks] };
+      })
+    );
+  };
+  const handleHeartClick = () => {
+    if (!currentTrack) return;
+    const wasLiked = isLiked(currentTrack);
+    toggleLike(currentTrack); // existing like logic
+
+    // If it was not liked before, now ask where to save
+    if (!wasLiked) {
+      setPlaylistModalTrack(currentTrack);
+    }
+  };
 
   // ---------- AUDIO EVENTS ----------
   useEffect(() => {
@@ -558,7 +712,24 @@ function MusicApp({ user, onLogout }) {
   };
 
   // which list to show on grid
-  const displayedTracks = activeTab === "library" ? library : tracks;
+  const displayedTracks = (() => {
+    // For non-library tabs, just show search results / normal tracks
+    if (activeTab !== "library") return tracks;
+
+    // If a specific playlist is selected → show ONLY that playlist's songs
+    if (selectedPlaylistId) {
+      const pl = playlists.find((pl) => pl.id === selectedPlaylistId);
+      return pl?.tracks || [];
+    }
+
+    // No playlist selected:
+    // Show ONLY liked songs that are NOT in any playlist
+    const playlistSongIds = new Set(
+      playlists.flatMap((pl) => pl.tracks.map((t) => t.id))
+    );
+
+    return library.filter((t) => !playlistSongIds.has(t.id));
+  })();
 
   // ---------- MAIN UI ----------
   return (
@@ -676,6 +847,80 @@ function MusicApp({ user, onLogout }) {
               </span>
               in the player to add songs to your Library.
             </p>
+          )}
+          {activeTab === "library" && (
+            <div className="px-4 mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-lg font-semibold">Your Playlists</h2>
+                <button
+                  onClick={() => {
+                    const name = window.prompt("Playlist name?");
+                    if (!name || !name.trim()) return;
+                    const id = crypto.randomUUID?.() || Date.now().toString();
+                    const newPl = {
+                      id,
+                      name: name.trim(),
+                      tracks: [],
+                      createdAt: Date.now(),
+                    };
+                    persistPlaylists([newPl, ...playlists]);
+                  }}
+                  className="text-xs px-3 py-1 rounded-full bg-white/10 hover:bg-white/20"
+                >
+                  + New Playlist
+                </button>
+              </div>
+
+              {playlists.length === 0 ? (
+                <p className="text-xs text-gray-400">
+                  No playlists yet. Like a song and add it to a playlist.
+                </p>
+              ) : (
+                <div className="flex gap-3 overflow-x-auto pb-1">
+                  {playlists.map((pl) => (
+                    <div
+                      key={pl.id}
+                      className={`min-w-[150px] rounded-2xl bg-white/5 border border-white/10 p-3 flex flex-col justify-between ${
+                        selectedPlaylistId === pl.id
+                          ? "ring-2 ring-cyan-400"
+                          : ""
+                      }`}
+                    >
+                      <button
+                        onClick={() =>
+                          setSelectedPlaylistId(
+                            selectedPlaylistId === pl.id ? null : pl.id
+                          )
+                        }
+                        className="text-left"
+                      >
+                        <p className="text-sm font-semibold truncate">
+                          {pl.name}
+                        </p>
+                        <p className="text-[11px] text-gray-400">
+                          {pl.tracks.length} songs
+                        </p>
+                      </button>
+                      <button
+                        onClick={() => handleSharePlaylist(pl)}
+                        className="mt-2 text-[11px] flex items-center gap-1 text-cyan-300 hover:text-cyan-200"
+                      >
+                        <Share2 size={14} /> Share
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {selectedPlaylistId && (
+                <button
+                  onClick={() => setSelectedPlaylistId(null)}
+                  className="mt-2 text-xs text-cyan-300 underline"
+                >
+                  Show liked songs
+                </button>
+              )}
+            </div>
           )}
 
           {/* GRID OF TRACKS (search OR library) */}
@@ -803,6 +1048,64 @@ function MusicApp({ user, onLogout }) {
               <span>Account</span>
             </button>
           </nav>
+          {playlistModalTrack && (
+            <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[9999]">
+              <div className="bg-zinc-900 rounded-2xl border border-white/15 p-4 w-[90%] max-w-sm">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-semibold text-lg">Add to playlist</h3>
+                  <button
+                    onClick={() => setPlaylistModalTrack(null)}
+                    className="text-gray-400 hover:text-white"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <p className="text-sm text-gray-300 mb-3">
+                  {playlistModalTrack.title} — {playlistModalTrack.singers}
+                </p>
+
+                {playlists.length === 0 && (
+                  <p className="text-sm text-gray-400 mb-3">
+                    You don&apos;t have any playlists yet. Create one below.
+                  </p>
+                )}
+
+                <div className="max-h-40 overflow-y-auto mb-3 space-y-2">
+                  {playlists.map((pl) => (
+                    <button
+                      key={pl.id}
+                      onClick={() => {
+                        addTrackToPlaylist(pl.id, playlistModalTrack);
+                        setPlaylistModalTrack(null);
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10"
+                    >
+                      <p className="text-sm font-medium truncate">{pl.name}</p>
+                      <p className="text-[11px] text-gray-400">
+                        {pl.tracks.length} songs
+                      </p>
+                    </button>
+                  ))}
+                </div>
+
+                {/* New playlist inline create */}
+                <NewPlaylistForm
+                  onCreate={(name) => {
+                    const id = crypto.randomUUID?.() || Date.now().toString();
+                    const newPl = {
+                      id,
+                      name: name.trim() || "New Playlist",
+                      tracks: playlistModalTrack ? [playlistModalTrack] : [],
+                      createdAt: Date.now(),
+                    };
+                    persistPlaylists([newPl, ...playlists]);
+                    setPlaylistModalTrack(null);
+                  }}
+                />
+              </div>
+            </div>
+          )}
 
           {/* Simple mobile account sheet */}
           {activeTab === "account" && (
@@ -967,7 +1270,10 @@ function MusicApp({ user, onLogout }) {
                 {currentTrack.singers}
               </p>
 
-              <div className="w-64 md:w-80 h-2 bg-white/20 rounded-full mt-6 overflow-hidden">
+              <div
+                className="w-64 md:w-80 h-2 bg-white/20 rounded-full mt-6 overflow-hidden cursor-pointer"
+                onClick={handleSeek}
+              >
                 <div
                   className="h-full transition-all"
                   style={{
@@ -976,6 +1282,7 @@ function MusicApp({ user, onLogout }) {
                   }}
                 />
               </div>
+
               <div className="mt-7 flex flex-col items-center gap-4 w-full">
                 {/* MAIN TRANSPORT CONTROLS (centered) */}
                 <div className="flex items-center justify-center gap-6 text-2xl md:text-3xl">
@@ -1008,7 +1315,7 @@ function MusicApp({ user, onLogout }) {
                 {/* SECONDARY CONTROLS (also centered) */}
                 <div className="flex items-center justify-center gap-8 text-xl md:text-2xl">
                   <button
-                    onClick={() => toggleLike(currentTrack)}
+                    onClick={handleHeartClick}
                     className={`transition ${
                       isLiked(currentTrack)
                         ? "text-rose-400"
@@ -1029,6 +1336,12 @@ function MusicApp({ user, onLogout }) {
                   >
                     <Shuffle />
                   </button>
+                  <button
+                    onClick={handleDownloadCurrent}
+                    className="transition text-gray-300 hover:text-cyan-400 hover:scale-110"
+                  >
+                    <Download size={24} />
+                  </button>
 
                   <button
                     onClick={() => setRepeat((r) => !r)}
@@ -1040,20 +1353,6 @@ function MusicApp({ user, onLogout }) {
                   </button>
                 </div>
               </div>
-
-              <button
-                onClick={() => {
-                  const a = document.createElement("a");
-                  a.href = currentTrack.url;
-                  a.download = `${currentTrack.title} - ${currentTrack.singers}.mp3`;
-                  document.body.appendChild(a);
-                  a.click();
-                  document.body.removeChild(a);
-                }}
-                className="mt-8 px-8 md:px-10 py-3 md:py-4 bg-green-600 hover:bg-green-500 rounded-full text-base md:text-xl font-bold flex items-center gap-3 transition shadow-lg shadow-green-500/40"
-              >
-                <Download size={22} /> Download Song
-              </button>
             </div>
 
             {/* RIGHT: QUEUE LIST (UP NEXT) */}
