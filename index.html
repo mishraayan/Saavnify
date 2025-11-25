@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -17,17 +17,31 @@
 
     <!-- iOS PWA Mode -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
     <meta name="apple-mobile-web-app-title" content="Saavnify ULTRA" />
 
     <!-- iOS Touch Icon -->
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <!-- Optionally multiple sizes -->
     <!-- <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"/> -->
-
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
+    <script
+      src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js"
+      defer
+    ></script>
+    <script>
+      window.OneSignalDeferred = window.OneSignalDeferred || [];
+      OneSignalDeferred.push(async function (OneSignal) {
+        await OneSignal.init({
+          appId: "15cfbf44-8d74-4d0c-9e52-40a98df06a84",
+        });
+      });
+    </script>
   </body>
 </html>
