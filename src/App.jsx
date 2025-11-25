@@ -24,6 +24,7 @@ import {
 
 // Your deployed JioSaavnAPI on Render
 const API = "https://rythm-1s3u.onrender.com";
+const YT_API = "https://yt-backend-8b51.onrender.com";
 
 // ---------- THEME UTILS ----------
 function getThemeForTrack(track) {
@@ -341,6 +342,11 @@ function MusicApp({ user, onLogout }) {
   const [needsRoomTap, setNeedsRoomTap] = useState(false);
   const [toast, setToast] = useState(null);
   const [playLatestOnLoad, setPlayLatestOnLoad] = useState(false);
+  const [isYouTube, setIsYouTube] = useState(false);
+  const [ytLastTime, setYtLastTime] = useState(0);
+  const ytProgressTimerRef = useRef(null);
+
+  const ytPlayerRef = useRef(null);
 
   const audioRef = useRef(null);
   const isMobile =
@@ -878,6 +884,140 @@ function MusicApp({ user, onLogout }) {
       setNeedsRoomTap(false); // no song = nothing to tap for
     }
   };
+  useEffect(() => {
+    if (
+      !isYouTube ||
+      !currentTrack ||
+      currentTrack.source !== "yt" ||
+      !showPlayer
+    )
+      return;
+
+    let playerInstance = null;
+    let cancelled = false;
+
+    function startProgressTimer(player) {
+      // clear any old timer
+      if (ytProgressTimerRef.current) {
+        clearInterval(ytProgressTimerRef.current);
+      }
+
+      ytProgressTimerRef.current = setInterval(() => {
+        if (!player || typeof player.getCurrentTime !== "function") return;
+
+        const t = player.getCurrentTime() || 0;
+        const d = player.getDuration();
+
+        // 🔄 Progress bar sync
+        if (d && d > 0) {
+          setProgress((t / d) * 100);
+        }
+
+        // 🎤 Karaoke lyric sync using refs (no re-mount)
+        const lyrics = syncedLyricsRef.current;
+        if (lyrics && lyrics.length > 0) {
+          const currentIdx = currentLyricIndexRef.current;
+
+          const idx = lyrics.findIndex((line, i) => {
+            const nextTime =
+              i === lyrics.length - 1 ? Infinity : lyrics[i + 1].time;
+            return t >= line.time && t < nextTime;
+          });
+
+          if (idx !== -1 && idx !== currentIdx) {
+            setCurrentLyricIndex(idx);
+          }
+        }
+      }, 500);
+    }
+
+    function createPlayer() {
+      if (cancelled) return;
+
+      playerInstance = new window.YT.Player("yt-player", {
+        videoId: currentTrack.id,
+        playerVars: {
+          autoplay: 1,
+          controls: 0,
+          rel: 0,
+          modestbranding: 1,
+        },
+        events: {
+          onReady: (e) => {
+            if (cancelled) return;
+            ytPlayerRef.current = e.target;
+
+            // 👇 resume from previous time if available
+            if (ytLastTime > 0) {
+              try {
+                e.target.seekTo(ytLastTime, true);
+              } catch (err) {
+                console.warn("Failed to seek YT on resume", err);
+              }
+            }
+
+            e.target.playVideo();
+            setIsPlaying(true);
+
+            // ⏱ start timer that also updates lyrics
+            startProgressTimer(e.target);
+          },
+          onStateChange: (e) => {
+            if (cancelled) return;
+
+            if (e.data === window.YT.PlayerState.PLAYING) {
+              setIsPlaying(true);
+            } else if (
+              e.data === window.YT.PlayerState.PAUSED ||
+              e.data === window.YT.PlayerState.ENDED
+            ) {
+              setIsPlaying(false);
+            }
+
+            if (e.data === window.YT.PlayerState.ENDED) {
+              if (repeat) {
+                e.target.seekTo(0, true);
+                e.target.playVideo();
+              } else {
+                playNext();
+              }
+            }
+          },
+        },
+      });
+    }
+
+    function onYouTubeIframeAPIReady() {
+      if (cancelled) return;
+      if (window.YT && window.YT.Player) {
+        createPlayer();
+      }
+    }
+
+    // Load script if needed
+    if (!window.YT || !window.YT.Player) {
+      const tag = document.createElement("script");
+      tag.src = "https://www.youtube.com/iframe_api";
+      document.body.appendChild(tag);
+      window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
+    } else {
+      createPlayer();
+    }
+
+    return () => {
+      cancelled = true;
+
+      if (ytProgressTimerRef.current) {
+        clearInterval(ytProgressTimerRef.current);
+        ytProgressTimerRef.current = null;
+      }
+
+      if (playerInstance && playerInstance.destroy) {
+        playerInstance.destroy();
+      }
+      ytPlayerRef.current = null;
+    };
+  }, [isYouTube, currentTrack, repeat, showPlayer, ytLastTime]);
 
   useEffect(() => {
     if (!roomId) return;
@@ -1109,32 +1249,81 @@ function MusicApp({ user, onLogout }) {
 
   // ---------- SEARCH SONGS ----------
   const searchSongs = async (qOverride) => {
-    // ✅ Always convert to a safe string before .trim()
     const raw = typeof qOverride === "string" ? qOverride : searchQuery || "";
     const q = raw.trim();
     if (!q) return;
+
     setLoading(true);
 
     try {
-      const res = await axios.get(
-        `${API}/result/?query=${encodeURIComponent(q)}`
-      );
-      let results = adaptSongs(res.data);
+      // 1️⃣ Call both APIs in parallel
+      const [saavnRes, ytRes] = await Promise.allSettled([
+        axios.get(`${API}/result/?query=${encodeURIComponent(q)}`),
+        axios.get(`${YT_API}/search?q=${encodeURIComponent(q)}`),
+      ]);
 
-      // Add some extra songs
-      if (results.length < 18) {
-        try {
-          const res2 = await axios.get(
-            `${API}/result/?query=${encodeURIComponent("bollywood hits")}`
-          );
-          const extra = adaptSongs(res2.data);
-          results = results.concat(extra);
-        } catch (e) {
-          console.error("Extra songs fetch error:", e);
-        }
+      let results = [];
+
+      // 🎵 Saavn → adapt + tag
+      if (saavnRes.status === "fulfilled") {
+        const saavnTracks = adaptSongs(saavnRes.value.data).map((t) => ({
+          ...t,
+          source: "saavn",
+        }));
+        results = results.concat(saavnTracks);
       }
 
-      // Deduplicate by title + singers
+      // 🎬 YouTube → normalize fields + image_url
+      if (ytRes.status === "fulfilled") {
+        const ytRaw = ytRes.value.data || [];
+
+        const ytTracks = ytRaw.map((t) => {
+          const videoId = t.id || t.videoId || t.video_id;
+
+          // Always build a high-quality thumbnail from videoId
+          const image_url = videoId
+            ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` // 1280x720
+            : "https://via.placeholder.com/500?text=YouTube+Track";
+
+          return {
+            id: videoId || t.id || Math.random().toString(),
+            title: t.title || t.name || "Unknown title",
+            singers:
+              t.channelTitle || t.channel || t.artist || t.singers || "YouTube",
+            image_url,
+            url: t.url, // keep whatever audio url your backend gives
+            source: "yt",
+          };
+        });
+
+        results = results.concat(ytTracks);
+      }
+
+      // 2️⃣ If both failed, keep your old hardcoded fallback
+      if (!results.length) {
+        const fallback = [
+          {
+            id: "1",
+            title: "Kesariya",
+            singers: "Arijit Singh",
+            image_url:
+              "https://c.saavncdn.com/871/Brahmastra-Original-Motion-Picture-Soundtrack-Hindi-2022-20221006155213-500x500.jpg",
+            url: "https://aac.saavncdn.com/871/c2febd353f3a076a406fa37510f31f9f_320.mp4",
+            source: "saavn",
+          },
+          {
+            id: "2",
+            title: "Tum Hi Ho",
+            singers: "Arijit Singh",
+            image_url: "https://c.saavncdn.com/871/Aashiqui-2-2013-500x500.jpg",
+            url: "https://aac.saavncdn.com/871/EToxUyFpcwQ_320.mp4",
+            source: "saavn",
+          },
+        ];
+        results = fallback;
+      }
+
+      // 3️⃣ De-duplicate by title + singers
       const seen = new Set();
       const unique = [];
       for (const t of results) {
@@ -1150,31 +1339,22 @@ function MusicApp({ user, onLogout }) {
       setTracks(unique.slice(0, 40));
       setQueue(unique);
     } catch (err) {
-      console.error("API error:", err);
-      const fallback = [
-        {
-          id: "1",
-          title: "Kesariya",
-          singers: "Arijit Singh",
-          image_url:
-            "https://c.saavncdn.com/871/Brahmastra-Original-Motion-Picture-Soundtrack-Hindi-2022-20221006155213-500x500.jpg",
-          url: "https://aac.saavncdn.com/871/c2febd353f3a076a406fa37510f31f9f_320.mp4",
-        },
-        {
-          id: "2",
-          title: "Tum Hi Ho",
-          singers: "Arijit Singh",
-          image_url: "https://c.saavncdn.com/871/Aashiqui-2-2013-500x500.jpg",
-          url: "https://aac.saavncdn.com/871/EToxUyFpcwQ_320.mp4",
-        },
-      ];
-      setTracks(fallback);
-      setQueue(fallback);
+      console.error("searchSongs failed:", err);
     } finally {
-      setLoading(false); // 👈 stop spinner
+      setLoading(false);
     }
   };
+
   const activeLyricRef = useRef(null);
+  const syncedLyricsRef = useRef(null);
+  const currentLyricIndexRef = useRef(0);
+  useEffect(() => {
+    syncedLyricsRef.current = syncedLyrics;
+  }, [syncedLyrics]);
+
+  useEffect(() => {
+    currentLyricIndexRef.current = currentLyricIndex;
+  }, [currentLyricIndex]);
 
   useEffect(() => {
     // only auto-scroll when followLyrics is enabled
@@ -1260,11 +1440,61 @@ function MusicApp({ user, onLogout }) {
   // ---------- PLAYER CONTROL ----------
   const openPlayer = async (track) => {
     if (!track || !track.url) return;
+    // 🔇 First, stop whatever was playing before
 
-    // 🚪 ROOM MODE
+    if (track.source === "yt") {
+      setYtLastTime(0);
+      setProgress(0);
+
+      // We are switching TO YouTube → stop HTML audio
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
+    } else {
+      // We are switching TO normal audio (Saavn etc.) → stop YouTube
+      if (ytPlayerRef.current) {
+        try {
+          ytPlayerRef.current.pauseVideo?.();
+          ytPlayerRef.current.stopVideo?.();
+        } catch (e) {
+          console.warn("Failed to stop YT player on switch", e);
+        }
+      }
+    }
+
+    // 🎬 1) YOUTUBE TRACKS (local only, no rooms yet)
+    if (track.source === "yt") {
+      if (inRoom) {
+        alert("YouTube tracks currently play only locally, not inside rooms.");
+        return;
+      }
+
+      // tell the UI we're in YouTube mode (you must have: const [isYouTube, setIsYouTube] = useState(false);)
+      setIsYouTube(true);
+
+      setCurrentTrack(track);
+      setShowPlayer(true);
+      setIsPlaying(false); // YT iframe will set this to true onReady
+
+      // keep queue behaviour same so Next/Prev works
+      setQueue((prev) => {
+        const base = prev.length ? prev : tracks;
+        const others = base.filter((t) => t.id !== track.id);
+        return [track, ...others];
+      });
+
+      // ⛔ don't touch <audio> here, YT will be handled by iframe player
+      return;
+    }
+
+    // From here down = normal AUDIO tracks (Saavn etc.)
+    setIsYouTube(false);
+
+    // 🚪 2) ROOM MODE (shared listening for audio tracks)
     if (inRoom && roomId) {
-      // 1️⃣ If there is already a current_track in this room,
-      //    treat this as "add to queue", not "start new song".
+      // If there is already a current_track in this room,
+      // treat this as "add to queue", not "start new song".
       if (roomState && roomState.current_track) {
         // Only the chosen DJ can add to queue
         if (!isCurrentDJ) {
@@ -1294,7 +1524,7 @@ function MusicApp({ user, onLogout }) {
         return;
       }
 
-      // 2️⃣ No current_track yet → this is the *first* song of the room
+      // No current_track yet → this is the *first* song of the room
       if (!isCurrentDJ) {
         alert("Wait for your turn, DJ is picked randomly each song 🎲");
         return;
@@ -1331,7 +1561,7 @@ function MusicApp({ user, onLogout }) {
       return;
     }
 
-    // 🎧 NORMAL (non-room) behaviour — your existing code
+    // 🎧 3) NORMAL (non-room) behaviour — your existing audio code
     let audio = audioRef.current;
     if (!audio) {
       audio = new Audio();
@@ -1428,6 +1658,27 @@ function MusicApp({ user, onLogout }) {
   };
 
   const handlePlayPause = () => {
+    // 🎬 YouTube play/pause
+    if (isYouTube) {
+      const player = ytPlayerRef.current;
+
+      // If player doesn't exist (full player closed), just open it
+      if (!player || !window.YT?.PlayerState) {
+        setShowPlayer(true); // this will mount yt-player div and recreate iframe
+        return;
+      }
+
+      const state = player.getPlayerState();
+
+      if (state === window.YT.PlayerState.PLAYING) {
+        player.pauseVideo();
+        setIsPlaying(false);
+      } else {
+        player.playVideo();
+        setIsPlaying(true);
+      }
+      return;
+    }
     const audio = audioRef.current;
     if (!audio) return;
 
@@ -1463,12 +1714,21 @@ function MusicApp({ user, onLogout }) {
   };
 
   const handleSeek = async (event) => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
     const rect = event.currentTarget.getBoundingClientRect();
     const clickX = event.clientX - rect.left;
     const pct = Math.min(Math.max(clickX / rect.width, 0), 1); // clamp 0–1
+    // 🎬 YT seeking
+    if (isYouTube && ytPlayerRef.current) {
+      const player = ytPlayerRef.current;
+      const dur = player.getDuration();
+      if (!dur) return;
+      const newTime = pct * dur;
+      player.seekTo(newTime, true);
+      setProgress(pct * 100);
+      return;
+    }
+    const audio = audioRef.current;
+    if (!audio) return;
 
     const newTime = audio.duration ? pct * audio.duration : 0;
 
@@ -1560,7 +1820,7 @@ function MusicApp({ user, onLogout }) {
   // ---------- AUDIO EVENTS ----------
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio) return; // 👈 important, nothing to attach yet
+    if (!audio || isYouTube) return; // 👈 important, nothing to attach yet
 
     const onTimeUpdate = () => {
       if (!audio.duration) return;
@@ -1700,6 +1960,7 @@ function MusicApp({ user, onLogout }) {
     roomId,
     roomMembers,
     roomState,
+    isYouTube,
   ]);
 
   const particlesInit = async (engine) => {
@@ -2008,20 +2269,22 @@ function MusicApp({ user, onLogout }) {
                   onClick={() => openPlayer(track)}
                   className="cursor-pointer group relative rounded-3xl overflow-hidden shadow-2xl bg-black/40 border border-white/10 hover:-translate-y-1 hover:scale-[1.02] transition"
                 >
-                  <div className="relative">
+                  {/* 🖼 square wrapper so YT + Saavn covers look identical */}
+                  <div className="relative w-full aspect-square overflow-hidden">
                     <img
                       src={track.image_url}
                       alt={track.title}
-                      className="w-full aspect-square object-cover group-hover:scale-110 transition duration-300"
+                      className="w-full h-full object-cover group-hover:scale-110 transition duration-300"
                     />
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
                       <Play size={40} className="text-white drop-shadow-lg" />
                     </div>
                   </div>
+
                   <p className="mt-3 font-bold text-center truncate px-2 text-sm md:text-base">
                     {track.title}
                   </p>
-                  <p className="text-xs md:text-sm text-gray-400 text-center truncate px-2">
+                  <p className="text-xs md:text-sm text-gray-400 text-center truncate px-2 mb-3">
                     {track.singers}
                   </p>
 
@@ -2031,7 +2294,7 @@ function MusicApp({ user, onLogout }) {
                         e.stopPropagation(); // don't open player
                         removeTrackFromPlaylist(selectedPlaylistId, track);
                       }}
-                      className="mb-3 mt-1 mx-auto text-[11px] flex items-center gap-1 text-rose-300 hover:text-rose-200"
+                      className="mb-3 -mt-1 mx-auto text-[11px] flex items-center gap-1 text-rose-300 hover:text-rose-200"
                     >
                       <Trash2 size={14} /> Remove
                     </button>
@@ -2334,7 +2597,20 @@ function MusicApp({ user, onLogout }) {
 
           <div className="relative min-h-screen flex flex-col md:flex-row items-start md:items-start justify-center md:justify-between px-4 md:px-10 py-6 md:py-10 gap-8 md:gap-12">
             <button
-              onClick={() => setShowPlayer(false)}
+              onClick={() => {
+                if (isYouTube && ytPlayerRef.current) {
+                  try {
+                    const t = ytPlayerRef.current.getCurrentTime?.() || 0;
+                    setYtLastTime(t); // 👈 remember where we were
+                  } catch (e) {
+                    console.warn("Failed to read YT time", e);
+                  }
+
+                  ytPlayerRef.current.pauseVideo?.();
+                  setIsPlaying(false);
+                }
+                setShowPlayer(false);
+              }}
               className="absolute top-4 right-4 md:top-8 md:right-8 z-50 hover:scale-110 transition-transform"
             >
               <X size={34} />
@@ -2355,17 +2631,28 @@ function MusicApp({ user, onLogout }) {
               </button>
               <div className="w-full flex items-center justify-center h-[260px] md:h-[340px] lg:h-[400px]">
                 {visualMode === "cover" ? (
-                  <img
-                    src={currentTrack.image_url}
-                    alt={currentTrack.title}
-                    className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
-                      isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
-                    }`}
-                    style={{
-                      boxShadow: `0 0 90px ${theme.primary}aa`,
-                      border: "3px solid rgba(255,255,255,0.25)",
-                    }}
-                  />
+                  isYouTube ? (
+                    // 🎬 YOUTUBE rectangle video (16:9)
+                    <div
+                      className="w-72 h-40 md:w-96 md:h-56 lg:w-[32rem] lg:h-[18rem] rounded-3xl overflow-hidden shadow-4xl border-4 border-white/15 bg-black"
+                      style={{ boxShadow: `0 0 90px ${theme.primary}aa` }}
+                    >
+                      <div id="yt-player" className="w-full h-full" />
+                    </div>
+                  ) : (
+                    // 🎧 Normal circular rotating album cover
+                    <img
+                      src={currentTrack.image_url}
+                      alt={currentTrack.title}
+                      className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
+                        isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
+                      }`}
+                      style={{
+                        boxShadow: `0 0 90px ${theme.primary}aa`,
+                        border: "3px solid rgba(255,255,255,0.25)",
+                      }}
+                    />
+                  )
                 ) : (
                   <div className="relative flex items-center justify-center w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem]">
                     {!isMobile && (
@@ -2447,7 +2734,6 @@ function MusicApp({ user, onLogout }) {
                   {currentTrack.singers}
                 </p>
               </div>
-              
 
               {/* Seek bar */}
               <div
