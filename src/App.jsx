@@ -884,140 +884,135 @@ function MusicApp({ user, onLogout }) {
       setNeedsRoomTap(false); // no song = nothing to tap for
     }
   };
-  useEffect(() => {
-    if (
-      !isYouTube ||
-      !currentTrack ||
-      currentTrack.source !== "yt" ||
-      !showPlayer
-    )
-      return;
+useEffect(() => {
+  if (
+    !isYouTube ||
+    !currentTrack ||
+    currentTrack.source !== "yt" ||
+    !showPlayer
+  )
+    return;
 
-    let playerInstance = null;
-    let cancelled = false;
+  let playerInstance = null;
+  let cancelled = false;
 
-    function startProgressTimer(player) {
-      // clear any old timer
-      if (ytProgressTimerRef.current) {
-        clearInterval(ytProgressTimerRef.current);
+  function startProgressTimer(player) {
+    if (ytProgressTimerRef.current) {
+      clearInterval(ytProgressTimerRef.current);
+    }
+
+    ytProgressTimerRef.current = setInterval(() => {
+      if (!player || typeof player.getCurrentTime !== "function") return;
+
+      const t = player.getCurrentTime() || 0;
+      const d = player.getDuration();
+
+      if (d && d > 0) {
+        setProgress((t / d) * 100);
       }
 
-      ytProgressTimerRef.current = setInterval(() => {
-        if (!player || typeof player.getCurrentTime !== "function") return;
+      // 🎤 karaoke sync using refs
+      const lyrics = syncedLyricsRef.current;
+      if (lyrics && lyrics.length > 0) {
+        const currentIdx = currentLyricIndexRef.current;
 
-        const t = player.getCurrentTime() || 0;
-        const d = player.getDuration();
+        const idx = lyrics.findIndex((line, i) => {
+          const nextTime =
+            i === lyrics.length - 1 ? Infinity : lyrics[i + 1].time;
+          return t >= line.time && t < nextTime;
+        });
 
-        // 🔄 Progress bar sync
-        if (d && d > 0) {
-          setProgress((t / d) * 100);
+        if (idx !== -1 && idx !== currentIdx) {
+          setCurrentLyricIndex(idx);
         }
+      }
+    }, 500);
+  }
 
-        // 🎤 Karaoke lyric sync using refs (no re-mount)
-        const lyrics = syncedLyricsRef.current;
-        if (lyrics && lyrics.length > 0) {
-          const currentIdx = currentLyricIndexRef.current;
+  function createPlayer() {
+    if (cancelled) return;
 
-          const idx = lyrics.findIndex((line, i) => {
-            const nextTime =
-              i === lyrics.length - 1 ? Infinity : lyrics[i + 1].time;
-            return t >= line.time && t < nextTime;
-          });
+    playerInstance = new window.YT.Player("yt-player", {
+      videoId: currentTrack.id,
+      playerVars: {
+        autoplay: 1,
+        controls: 0,
+        rel: 0,
+        modestbranding: 1,
+      },
+      events: {
+        onReady: (e) => {
+          if (cancelled) return;
+          ytPlayerRef.current = e.target;
 
-          if (idx !== -1 && idx !== currentIdx) {
-            setCurrentLyricIndex(idx);
+          if (ytLastTime > 0) {
+            try {
+              e.target.seekTo(ytLastTime, true);
+            } catch (err) {
+              console.warn("Failed to seek YT on resume", err);
+            }
           }
-        }
-      }, 500);
-    }
 
-    function createPlayer() {
-      if (cancelled) return;
-
-      playerInstance = new window.YT.Player("yt-player", {
-        videoId: currentTrack.id,
-        playerVars: {
-          autoplay: 1,
-          controls: 0,
-          rel: 0,
-          modestbranding: 1,
+          e.target.playVideo();
+          setIsPlaying(true);
+          startProgressTimer(e.target);
         },
-        events: {
-          onReady: (e) => {
-            if (cancelled) return;
-            ytPlayerRef.current = e.target;
+        onStateChange: (e) => {
+          if (cancelled) return;
 
-            // 👇 resume from previous time if available
-            if (ytLastTime > 0) {
-              try {
-                e.target.seekTo(ytLastTime, true);
-              } catch (err) {
-                console.warn("Failed to seek YT on resume", err);
-              }
-            }
-
-            e.target.playVideo();
+          if (e.data === window.YT.PlayerState.PLAYING) {
             setIsPlaying(true);
+          } else if (
+            e.data === window.YT.PlayerState.PAUSED ||
+            e.data === window.YT.PlayerState.ENDED
+          ) {
+            setIsPlaying(false);
+          }
 
-            // ⏱ start timer that also updates lyrics
-            startProgressTimer(e.target);
-          },
-          onStateChange: (e) => {
-            if (cancelled) return;
-
-            if (e.data === window.YT.PlayerState.PLAYING) {
-              setIsPlaying(true);
-            } else if (
-              e.data === window.YT.PlayerState.PAUSED ||
-              e.data === window.YT.PlayerState.ENDED
-            ) {
-              setIsPlaying(false);
+          if (e.data === window.YT.PlayerState.ENDED) {
+            if (repeat) {
+              e.target.seekTo(0, true);
+              e.target.playVideo();
+            } else {
+              playNext();
             }
-
-            if (e.data === window.YT.PlayerState.ENDED) {
-              if (repeat) {
-                e.target.seekTo(0, true);
-                e.target.playVideo();
-              } else {
-                playNext();
-              }
-            }
-          },
+          }
         },
-      });
-    }
+      },
+    });
+  }
 
-    function onYouTubeIframeAPIReady() {
-      if (cancelled) return;
-      if (window.YT && window.YT.Player) {
-        createPlayer();
-      }
-    }
-
-    // Load script if needed
-    if (!window.YT || !window.YT.Player) {
-      const tag = document.createElement("script");
-      tag.src = "https://www.youtube.com/iframe_api";
-      document.body.appendChild(tag);
-      window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
-    } else {
+  function onYouTubeIframeAPIReady() {
+    if (cancelled) return;
+    if (window.YT && window.YT.Player) {
       createPlayer();
     }
+  }
 
-    return () => {
-      cancelled = true;
+  if (!window.YT || !window.YT.Player) {
+    const tag = document.createElement("script");
+    tag.src = "https://www.youtube.com/iframe_api";
+    document.body.appendChild(tag);
+    window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
+  } else {
+    createPlayer();
+  }
 
-      if (ytProgressTimerRef.current) {
-        clearInterval(ytProgressTimerRef.current);
-        ytProgressTimerRef.current = null;
-      }
+  return () => {
+    cancelled = true;
 
-      if (playerInstance && playerInstance.destroy) {
-        playerInstance.destroy();
-      }
-      ytPlayerRef.current = null;
-    };
-  }, [isYouTube, currentTrack, repeat, showPlayer, ytLastTime]);
+    if (ytProgressTimerRef.current) {
+      clearInterval(ytProgressTimerRef.current);
+      ytProgressTimerRef.current = null;
+    }
+
+    if (playerInstance && playerInstance.destroy) {
+      playerInstance.destroy();
+    }
+    ytPlayerRef.current = null;
+  };
+}, [isYouTube, currentTrack?.id, repeat, showPlayer, ytLastTime]);
+
 
   useEffect(() => {
     if (!roomId) return;
