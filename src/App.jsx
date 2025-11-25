@@ -2447,7 +2447,7 @@ function MusicApp({ user, onLogout }) {
                   {currentTrack.singers}
                 </p>
               </div>
-              <div className="flex flex-col items-center justify-center h-[130px] md:h-[160px] gap-4">
+              
 
               {/* Seek bar */}
               <div
@@ -2512,7 +2512,6 @@ function MusicApp({ user, onLogout }) {
                   >
                     <SkipForward />
                   </button>
-                </div>
                 </div>
                 {/* 🔔 Tap-to-join button for non-host room members */}
                 {inRoom && !isRoomOwner && needsRoomTap && (
