@@ -334,6 +334,10 @@ function MusicApp({ user, onLogout }) {
   const [playlistModalTrack, setPlaylistModalTrack] = useState(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [followLyrics, setFollowLyrics] = useState(true);
+  const [roomId, setRoomId] = useState(null);
+  const [roomState, setRoomState] = useState(null); // mirrors row in `rooms`
+  const [roomMembers, setRoomMembers] = useState([]); // people inside room
+  const [inRoom, setInRoom] = useState(false);
 
   const audioRef = useRef(null);
   const isMobile =
@@ -350,6 +354,58 @@ function MusicApp({ user, onLogout }) {
         : "",
     []
   );
+  const shareRoom = () => {
+    if (!roomId) return;
+    const link = `${window.location.origin}${window.location.pathname}?room=${roomId}`;
+
+    navigator.clipboard
+      .writeText(link)
+      .then(() => alert("Room link copied!"))
+      .catch(() => alert("Room link: " + link));
+  };
+
+  const handleDeleteRoom = async () => {
+    if (!roomId || !roomState) return;
+
+    // 🔒 Only host can end room – safety check
+    if (roomState.host_id !== LOCAL_USER_ID) {
+      alert("Only the room owner can end the room.");
+      return;
+    }
+
+    if (!window.confirm("End this room for everyone?")) return;
+
+    try {
+      const { error } = await supabase.from("rooms").delete().eq("id", roomId);
+
+      if (error) throw error;
+
+      setInRoom(false);
+      setRoomId(null);
+      setRoomState(null);
+      setRoomMembers([]);
+      setIsPlaying(false);
+
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
+
+      // remove ?room= from URL
+      const params = new URLSearchParams(window.location.search);
+      params.delete("room");
+      const newUrl =
+        window.location.pathname +
+        (params.toString() ? "?" + params.toString() : "");
+      window.history.replaceState({}, "", newUrl);
+
+      alert("Room deleted ✅");
+    } catch (e) {
+      console.error("Delete room failed:", e);
+      alert("Failed to delete room");
+    }
+  };
+
   // Restore playback state on load
   // restore playback
   useEffect(() => {
@@ -599,6 +655,198 @@ function MusicApp({ user, onLogout }) {
       window.removeEventListener("offline", goOffline);
     };
   }, []);
+  // --- ROOM HELPERS ---
+
+  const createRoom = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("rooms")
+        .insert({
+          name: `${user?.name || "Guest"}'s room`,
+          current_dj: LOCAL_USER_ID,
+          host_id: LOCAL_USER_ID,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // add yourself as member
+      await supabase.from("room_members").insert({
+        room_id: data.id,
+        user_id: LOCAL_USER_ID,
+      });
+
+      // put room id in URL so it can be shared
+      const params = new URLSearchParams(window.location.search);
+      params.set("room", data.id);
+      const newUrl = window.location.pathname + "?" + params.toString();
+      window.history.replaceState({}, "", newUrl);
+
+      setRoomId(data.id);
+      setRoomState(data);
+      setInRoom(true);
+    } catch (e) {
+      console.error("Create room failed", e);
+      alert("Could not create room");
+    }
+  };
+
+  const joinRoom = async (id) => {
+    try {
+      // make sure room exists
+      const { data: room, error } = await supabase
+        .from("rooms")
+        .select("*")
+        .eq("id", id)
+        .single();
+
+      if (error || !room) {
+        alert("Room not found");
+        return;
+      }
+
+      // upsert membership
+      await supabase.from("room_members").upsert(
+        {
+          room_id: id,
+          user_id: LOCAL_USER_ID,
+          last_seen: new Date().toISOString(),
+        },
+        { onConflict: "room_id,user_id" }
+      );
+
+      setRoomId(id);
+      setRoomState(room);
+      setInRoom(true);
+    } catch (e) {
+      console.error("Join room failed", e);
+      alert("Could not join room");
+    }
+  };
+
+  const leaveRoom = async () => {
+    if (!roomId) return;
+    try {
+      await supabase
+        .from("room_members")
+        .delete()
+        .eq("room_id", roomId)
+        .eq("user_id", LOCAL_USER_ID);
+    } catch (e) {
+      console.error(e);
+    }
+
+    setInRoom(false);
+    setRoomId(null);
+    setRoomState(null);
+
+    // clean room query param
+    const params = new URLSearchParams(window.location.search);
+    params.delete("room");
+    const newUrl =
+      window.location.pathname +
+      (params.toString() ? "?" + params.toString() : "");
+    window.history.replaceState({}, "", newUrl);
+  };
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("room");
+    if (id) {
+      joinRoom(id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (!roomId) return;
+
+    // 1) listen to room row changes (track / queue / dj …)
+    const roomChannel = supabase
+      .channel(`room:${roomId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "rooms",
+          filter: `id=eq.${roomId}`,
+        },
+        (payload) => {
+          const room = payload.new;
+          setRoomState(room);
+
+          // sync playback with room.current_track
+          const audio = audioRef.current;
+          if (!audio) return;
+
+          if (room.current_track) {
+            const track = room.current_track;
+            // if we are not already on this track, load it
+            if (!currentTrack || currentTrack.id !== track.id) {
+              setCurrentTrack(track);
+              audio.src = track.url;
+            }
+
+            if (room.is_playing) {
+              // compute current position based on started_at
+              if (room.started_at) {
+                const started = new Date(room.started_at).getTime();
+                const now = Date.now();
+                const elapsedSec = Math.max((now - started) / 1000, 0);
+                audio.currentTime = elapsedSec;
+              }
+              audio
+                .play()
+                .then(() => setIsPlaying(true))
+                .catch(() => setIsPlaying(false));
+            } else {
+              audio.pause();
+              setIsPlaying(false);
+            }
+          } else {
+            // no song in room
+            setCurrentTrack(null);
+            setIsPlaying(false);
+          }
+        }
+      )
+      .subscribe();
+
+    // 2) listen to members list
+    const membersChannel = supabase
+      .channel(`room-members:${roomId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "room_members",
+          filter: `room_id=eq.${roomId}`,
+        },
+        async () => {
+          const { data } = await supabase
+            .from("room_members")
+            .select("*")
+            .eq("room_id", roomId);
+          setRoomMembers(data || []);
+        }
+      )
+      .subscribe();
+
+    // initial load of members
+    supabase
+      .from("room_members")
+      .select("*")
+      .eq("room_id", roomId)
+      .then(({ data }) => setRoomMembers(data || []));
+
+    return () => {
+      supabase.removeChannel(roomChannel);
+      supabase.removeChannel(membersChannel);
+    };
+  }, [roomId, currentTrack]);
+
   useEffect(() => {
     if (!currentTrack) {
       setLyrics(null);
@@ -851,6 +1099,8 @@ function MusicApp({ user, onLogout }) {
       });
     }
   }, [currentLyricIndex, followLyrics]);
+  const isCurrentDJ =
+    inRoom && roomState && roomState.current_dj === LOCAL_USER_ID;
 
   useEffect(() => {
     searchSongs();
@@ -858,10 +1108,80 @@ function MusicApp({ user, onLogout }) {
   }, []);
 
   // ---------- PLAYER CONTROL ----------
-  const openPlayer = (track) => {
+  const openPlayer = async (track) => {
     if (!track || !track.url) return;
 
-    // Lazy-create audio only when user clicks a song → mobile-safe
+    // 🚪 ROOM MODE
+    if (inRoom && roomId) {
+      // 1️⃣ If there is already a current_track in this room,
+      //    treat this as "add to queue", not "start new song".
+      if (roomState && roomState.current_track) {
+        // Only the chosen DJ can add to queue
+        if (!isCurrentDJ) {
+          alert("Only the chosen DJ can add to queue right now 🎲");
+          return;
+        }
+
+        try {
+          const currentQueue = Array.isArray(roomState.queue)
+            ? roomState.queue
+            : [];
+
+          const { error } = await supabase
+            .from("rooms")
+            .update({
+              queue: [...currentQueue, track],
+              last_activity: new Date().toISOString(),
+            })
+            .eq("id", roomId);
+
+          if (error) throw error;
+        } catch (e) {
+          console.error("Add to queue failed", e);
+        }
+
+        // ✅ Don't touch local audio; everyone will advance via onEnded logic
+        return;
+      }
+
+      // 2️⃣ No current_track yet → this is the *first* song of the room
+      if (!isCurrentDJ) {
+        alert("Wait for your turn, DJ is picked randomly each song 🎲");
+        return;
+      }
+
+      try {
+        const nowIso = new Date().toISOString();
+
+        // choose next DJ for the *next* song
+        const nextDj =
+          roomMembers && roomMembers.length > 0
+            ? roomMembers[Math.floor(Math.random() * roomMembers.length)]
+                .user_id
+            : LOCAL_USER_ID;
+
+        const { error } = await supabase
+          .from("rooms")
+          .update({
+            current_track: track,
+            is_playing: true,
+            started_at: nowIso,
+            last_activity: nowIso,
+            current_dj: nextDj, // 🎲 DJ for the *next* pick
+          })
+          .eq("id", roomId);
+
+        if (error) throw error;
+
+        // Everyone’s client will pick this up from the realtime room listener
+      } catch (e) {
+        console.error("Room play failed", e);
+      }
+
+      return;
+    }
+
+    // 🎧 NORMAL (non-room) behaviour — your existing code
     let audio = audioRef.current;
     if (!audio) {
       audio = new Audio();
@@ -878,7 +1198,7 @@ function MusicApp({ user, onLogout }) {
         setIsPlaying(true);
       })
       .catch(() => {
-        setIsPlaying(false); // browser blocked autoplay → normal
+        setIsPlaying(false);
       });
 
     setQueue((prev) => {
@@ -1057,6 +1377,75 @@ function MusicApp({ user, onLogout }) {
     };
 
     const onEnded = () => {
+      if (inRoom && roomId) {
+        // 🛡 Only room owner OR current DJ is allowed to advance the queue
+        const isRoomOwner = roomState?.host_id === LOCAL_USER_ID;
+        const isDj = roomState?.current_dj === LOCAL_USER_ID;
+
+        if (!isRoomOwner && !isDj) {
+          // Other members just wait for realtime update
+          return;
+        }
+
+        // In a room: take first item from shared queue
+        (async () => {
+          try {
+            const { data: room, error } = await supabase
+              .from("rooms")
+              .select("queue")
+              .eq("id", roomId)
+              .single();
+
+            if (error) {
+              console.error("Failed to load room in onEnded:", error);
+              return;
+            }
+
+            // Make sure we always have an array
+            const queueArr = Array.isArray(room?.queue) ? room.queue : [];
+
+            if (queueArr.length === 0) {
+              // nothing to play, just stop
+              await supabase
+                .from("rooms")
+                .update({
+                  current_track: null,
+                  is_playing: false,
+                })
+                .eq("id", roomId);
+              return;
+            }
+
+            // Take first track and keep the rest
+            const [nextTrack, ...remaining] = queueArr;
+
+            const nowIso = new Date().toISOString();
+            const nextDj =
+              roomMembers && roomMembers.length > 0
+                ? roomMembers[Math.floor(Math.random() * roomMembers.length)]
+                    .user_id
+                : LOCAL_USER_ID;
+
+            await supabase
+              .from("rooms")
+              .update({
+                current_track: nextTrack,
+                queue: remaining,
+                is_playing: true,
+                started_at: nowIso,
+                last_activity: nowIso,
+                current_dj: nextDj,
+              })
+              .eq("id", roomId);
+          } catch (e) {
+            console.error("Room onEnded failed", e);
+          }
+        })();
+
+        return;
+      }
+
+      // normal behaviour when not in a room
       if (repeat) {
         audio.currentTime = 0;
         audio.play();
@@ -1079,7 +1468,18 @@ function MusicApp({ user, onLogout }) {
       audio.removeEventListener("play", onPlay);
       audio.removeEventListener("pause", onPause);
     };
-  }, [repeat, queue, currentTrack, shuffle, syncedLyrics, currentLyricIndex]);
+  }, [
+    repeat,
+    queue,
+    currentTrack,
+    shuffle,
+    syncedLyrics,
+    currentLyricIndex,
+    inRoom,
+    roomId,
+    roomMembers,
+    roomState,
+  ]);
 
   const particlesInit = async (engine) => {
     await loadFull(engine);
@@ -1148,7 +1548,7 @@ function MusicApp({ user, onLogout }) {
                 onKeyDown={(e) => e.key === "Enter" && searchSongs()}
                 placeholder="Search songs, artists..."
                 className="px-4 py-2 rounded-full bg-white/10 border border-white/20 text-white w-56
-              focus:outline-none focus:border-cyan-500 transition"
+      focus:outline-none focus:border-cyan-500 transition"
               />
 
               <button
@@ -1181,8 +1581,48 @@ function MusicApp({ user, onLogout }) {
               >
                 Search
               </button>
+
+              {/* 🎧 Room controls – desktop */}
+              {!inRoom && (
+                <button
+                  onClick={createRoom}
+                  className="px-3 py-1 rounded-full bg-emerald-500/80 hover:bg-emerald-500 text-sm"
+                >
+                  Create Room
+                </button>
+              )}
+
+              {inRoom && roomId && (
+                <>
+                  {/* Any member can share */}
+                  <button
+                    onClick={shareRoom}
+                    className="px-3 py-1 rounded-full bg-white/10 hover:bg-white/20 text-xs"
+                  >
+                    Share Room
+                  </button>
+
+                  {/* All members can leave */}
+                  <button
+                    onClick={leaveRoom}
+                    className="px-3 py-1 rounded-full bg-orange-500/80 hover:bg-orange-500 text-xs"
+                  >
+                    Leave Room
+                  </button>
+
+                  {/* 🔒 Only owner sees End Room */}
+                  {roomState?.host_id === LOCAL_USER_ID && (
+                    <button
+                      onClick={handleDeleteRoom}
+                      className="px-3 py-1 rounded-full bg-red-500/80 hover:bg-red-500 text-xs font-semibold"
+                    >
+                      End Room
+                    </button>
+                  )}
+                </>
+              )}
+
               <button
-                // desktop logout
                 onClick={() => {
                   const audio = audioRef.current;
                   if (audio) {
@@ -1404,14 +1844,24 @@ function MusicApp({ user, onLogout }) {
               </div>
               <div className="flex items-center gap-2 sm:gap-4">
                 <button
-                  onClick={playPrev}
-                  className="text-gray-200 hover:scale-110 transition-transform"
+                  onClick={!inRoom ? playPrev : undefined}
+                  disabled={inRoom}
+                  className={`text-gray-200 ${
+                    inRoom
+                      ? "opacity-40 cursor-not-allowed"
+                      : "hover:scale-110 transition-transform"
+                  }`}
                 >
                   <SkipBack size={18} />
                 </button>
                 <button
                   onClick={handlePlayPause}
-                  className="w-9 h-9 rounded-full flex items-center justify-center hover:opacity-90 transition"
+                  disabled={inRoom} // all control from room state, not local
+                  className={`w-9 h-9 rounded-full flex items-center justify-center ${
+                    inRoom
+                      ? "opacity-40 cursor-not-allowed"
+                      : "hover:opacity-90"
+                  }`}
                   style={{
                     background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
                   }}
@@ -1419,8 +1869,13 @@ function MusicApp({ user, onLogout }) {
                   {isPlaying ? <Pause size={18} /> : <Play size={18} />}
                 </button>
                 <button
-                  onClick={playNext}
-                  className="text-gray-200 hover:scale-110 transition-transform"
+                  onClick={!inRoom ? playNext : undefined}
+                  disabled={inRoom}
+                  className={`text-gray-200 ${
+                    inRoom
+                      ? "opacity-40 cursor-not-allowed"
+                      : "hover:scale-110 transition-transform"
+                  }`}
                 >
                   <SkipForward size={18} />
                 </button>
@@ -1533,6 +1988,58 @@ function MusicApp({ user, onLogout }) {
                 {user?.name || "Saavnify User"}
               </p>
               <p className="text-gray-300 mb-3">{user?.email}</p>
+
+              {/* 📡 Room controls (mobile) */}
+              {!inRoom && (
+                <button
+                  onClick={createRoom}
+                  className="w-full px-3 py-2 rounded-full bg-emerald-500/90 hover:bg-emerald-500 text-xs font-semibold mb-2"
+                >
+                  Create Room
+                </button>
+              )}
+
+              {inRoom && roomId && (
+                <>
+                  <p className="text-[11px] text-emerald-300 mb-1">
+                    You are in a shared room
+                  </p>
+
+                  {/* Any member can share */}
+                  <button
+                    onClick={() => {
+                      const link = `${window.location.origin}${window.location.pathname}?room=${roomId}`;
+                      navigator.clipboard
+                        .writeText(link)
+                        .then(() => alert("Room link copied!"))
+                        .catch(() => alert("Room link: " + link));
+                    }}
+                    className="w-full px-3 py-2 rounded-full bg-white/10 hover:bg-white/20 text-xs font-semibold mb-2"
+                  >
+                    Share Room
+                  </button>
+
+                  {/* Any member can leave */}
+                  <button
+                    onClick={leaveRoom}
+                    className="w-full px-3 py-2 rounded-full bg-red-500/90 hover:bg-red-500 text-xs font-semibold mb-3"
+                  >
+                    Leave Room
+                  </button>
+
+                  {/* 🔒 Only the room owner sees End Room */}
+                  {roomState?.host_id === LOCAL_USER_ID && (
+                    <button
+                      onClick={handleDeleteRoom}
+                      className="w-full px-3 py-2 rounded-full bg-red-600/90 hover:bg-red-600 text-xs font-semibold mb-3"
+                    >
+                      End Room (Owner)
+                    </button>
+                  )}
+                </>
+              )}
+
+              {/* existing logout + notifications */}
               <button
                 onClick={() => {
                   const audio = audioRef.current;
@@ -1715,13 +2222,21 @@ function MusicApp({ user, onLogout }) {
               <div className="sticky top-0 bg-black/80 backdrop-blur-lg pt-6 pb-4">
                 {/* Main transport controls */}
                 <div className="flex items-center justify-center gap-6 text-2xl md:text-3xl">
+                  {/* ⏮ PREV – disabled in room */}
                   <button
-                    onClick={playPrev}
-                    className="hover:scale-110 transition-transform text-gray-200"
+                    onClick={inRoom ? undefined : playPrev}
+                    disabled={inRoom}
+                    className={
+                      "transition-transform " +
+                      (inRoom
+                        ? "text-gray-500 opacity-40 cursor-not-allowed"
+                        : "text-gray-200 hover:scale-110")
+                    }
                   >
                     <SkipBack />
                   </button>
 
+                  {/* ▶ / ⏸ – still allowed in room (local play/pause) */}
                   <button
                     onClick={handlePlayPause}
                     className="w-14 h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center shadow-xl hover:opacity-90 transition"
@@ -1733,15 +2248,22 @@ function MusicApp({ user, onLogout }) {
                     {isPlaying ? <Pause size={30} /> : <Play size={30} />}
                   </button>
 
+                  {/* ⏭ NEXT – disabled in room */}
                   <button
-                    onClick={playNext}
-                    className="hover:scale-110 transition-transform text-gray-200"
+                    onClick={inRoom ? undefined : playNext}
+                    disabled={inRoom}
+                    className={
+                      "transition-transform " +
+                      (inRoom
+                        ? "text-gray-500 opacity-40 cursor-not-allowed"
+                        : "text-gray-200 hover:scale-110")
+                    }
                   >
                     <SkipForward />
                   </button>
                 </div>
 
-                {/* Secondary controls */}
+                {/* Secondary controls (heart, shuffle, download, repeat) */}
                 <div className="flex items-center justify-center gap-8 text-xl md:text-2xl">
                   <button
                     onClick={handleHeartClick}
@@ -1975,6 +2497,18 @@ function MusicApp({ user, onLogout }) {
     </>
   );
 }
+function getOrCreateUserId() {
+  if (typeof window === "undefined") return null;
+  let id = window.localStorage.getItem("saavnify_user_id");
+  if (!id) {
+    id = crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
+    window.localStorage.setItem("saavnify_user_id", id);
+  }
+  return id;
+}
+
+const LOCAL_USER_ID =
+  typeof window !== "undefined" ? getOrCreateUserId() : null;
 
 // ---------- ROOT APP ----------
 export default function App() {
