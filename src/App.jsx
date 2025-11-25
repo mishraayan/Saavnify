@@ -1440,7 +1440,7 @@ useEffect(() => {
     if (track.source === "yt") {
       setYtLastTime(0);
       setProgress(0);
-
+      setVisualMode("cover");
       // We are switching TO YouTube → stop HTML audio
       if (audioRef.current) {
         audioRef.current.pause();
@@ -2613,113 +2613,115 @@ useEffect(() => {
 
             {/* LEFT: Visualizer */}
             <div className="flex-1 flex flex-col items-center justify-start pb-10 min-h-[calc(100vh-80px)]">
-              <button
-                onClick={() => {
-                  setVisualMode((m) => (m === "cover" ? "sphere" : "cover"));
-                  window.scrollTo({ top: 0, behavior: "smooth" });
-                }}
-                className="absolute top-4 left-4 md:top-8 md:left-8 z-50 px-4 py-2 rounded-full bg-white/10 border border-white/30 text-xs md:text-sm hover:bg-white/20 transition"
-              >
-                {visualMode === "cover"
-                  ? "Sphere Visualizer"
-                  : "Show Album Cover"}
-              </button>
-              <div className="w-full flex items-center justify-center h-[260px] md:h-[340px] lg:h-[400px]">
-                {visualMode === "cover" ? (
-                  isYouTube ? (
-                    // 🎬 YOUTUBE rectangle video (16:9)
-                    <div
-                      className="w-72 h-40 md:w-96 md:h-56 lg:w-[32rem] lg:h-[18rem] rounded-3xl overflow-hidden shadow-4xl border-4 border-white/15 bg-black"
-                      style={{ boxShadow: `0 0 90px ${theme.primary}aa` }}
-                    >
-                      <div id="yt-player" className="w-full h-full" />
-                    </div>
-                  ) : (
-                    // 🎧 Normal circular rotating album cover
-                    <img
-                      src={currentTrack.image_url}
-                      alt={currentTrack.title}
-                      className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
-                        isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
-                      }`}
-                      style={{
-                        boxShadow: `0 0 90px ${theme.primary}aa`,
-                        border: "3px solid rgba(255,255,255,0.25)",
-                      }}
-                    />
-                  )
-                ) : (
-                  <div className="relative flex items-center justify-center w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem]">
-                    {!isMobile && (
-                      <Particles
-                        init={particlesInit}
-                        className="absolute inset-0"
-                        options={{
-                          fullScreen: { enable: false },
-                          background: { color: "transparent" },
-                          fpsLimit: 60,
-                          particles: {
-                            number: {
-                              value: 260,
-                              density: { enable: true, area: 800 },
-                            },
-                            color: { value: [theme.primary, theme.secondary] },
-                            size: { value: { min: 0.5, max: 2 } },
-                            opacity: {
-                              value: 0.9,
-                              animation: {
-                                enable: true,
-                                speed: 2,
-                                minimumValue: 0.2,
-                              },
-                            },
-                            move: {
-                              enable: true,
-                              speed: isPlaying ? 2.3 : 0.5,
-                              direction: "none",
-                              outModes: { default: "bounce" },
-                              random: true,
-                            },
-                          },
-                        }}
-                      />
-                    )}
-                    <div
-                      className="absolute inset-0 rounded-full"
-                      style={{
-                        boxShadow: `0 0 140px ${theme.primary}aa`,
-                        border: `2px solid ${theme.primary}55`,
-                        animation: isPlaying
-                          ? "beat 1.1s ease-in-out infinite"
-                          : "none",
-                      }}
-                    />
-                    <div
-                      className="absolute inset-6 rounded-full"
-                      style={{ border: `1px solid ${theme.secondary}99` }}
-                    />
-                    <div
-                      className="relative w-32 h-32 md:w-40 md:h-40 rounded-full flex flex-col items-center justify-center text-center px-4"
-                      style={{
-                        background:
-                          "radial-gradient(circle, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.7) 60%, transparent 100%)",
-                        border: `1px solid ${theme.primary}cc`,
-                        boxShadow: `0 0 60px ${theme.secondary}aa`,
-                      }}
-                    >
-                      <p className="text-[10px] md:text-xs uppercase tracking-[0.25em] mb-1 text-gray-300">
-                        Now Playing
-                      </p>
-                      <p className="text-xs md:text-sm font-semibold line-clamp-2">
-                        {currentTrack.title}
-                      </p>
-                      <p className="text-[10px] md:text-xs text-gray-300 line-clamp-2 mt-1">
-                        {currentTrack.singers}
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
+      {!isYouTube && (
+  <button
+    onClick={() => {
+      setVisualMode((m) => (m === "cover" ? "sphere" : "cover"));
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }}
+    className="absolute top-4 left-4 md:top-8 md:left-8 z-50 px-4 py-2 rounded-full bg-white/10 border border-white/30 text-xs md:text-sm hover:bg-white/20 transition"
+  >
+    {visualMode === "cover"
+      ? "Sphere Visualizer"
+      : "Show Album Cover"}
+  </button>
+)}
+
+           <div className="w-full flex items-center justify-center h-[260px] md:h-[340px] lg:h-[400px]">
+  {isYouTube || visualMode === "cover" ? (
+    // 👇 Always show cover image for YT or normal cover mode
+    <img
+      src={currentTrack.image_url}
+      alt={currentTrack.title}
+      className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
+        isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
+      }`}
+      style={{
+        boxShadow: `0 0 90px ${theme.primary}aa`,
+        border: "3px solid rgba(255,255,255,0.25)",
+      }}
+    />
+  ) : (
+    // 🌌 Sphere visualizer (only for non-YT + visualMode === "sphere")
+    <div className="relative flex items-center justify-center w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem]">
+      {!isMobile && (
+        <Particles
+          init={particlesInit}
+          className="absolute inset-0"
+          options={{
+            fullScreen: { enable: false },
+            background: { color: "transparent" },
+            fpsLimit: 60,
+            particles: {
+              number: {
+                value: 260,
+                density: { enable: true, area: 800 },
+              },
+              color: { value: [theme.primary, theme.secondary] },
+              size: { value: { min: 0.5, max: 2 } },
+              opacity: {
+                value: 0.9,
+                animation: {
+                  enable: true,
+                  speed: 2,
+                  minimumValue: 0.2,
+                },
+              },
+              move: {
+                enable: true,
+                speed: isPlaying ? 2.3 : 0.5,
+                direction: "none",
+                outModes: { default: "bounce" },
+                random: true,
+              },
+            },
+          }}
+        />
+      )}
+      <div
+        className="absolute inset-0 rounded-full"
+        style={{
+          boxShadow: `0 0 140px ${theme.primary}aa`,
+          border: `2px solid ${theme.primary}55`,
+          animation: isPlaying
+            ? "beat 1.1s ease-in-out infinite"
+            : "none",
+        }}
+      />
+      <div
+        className="absolute inset-6 rounded-full"
+        style={{ border: `1px solid ${theme.secondary}99` }}
+      />
+      <div
+        className="relative w-32 h-32 md:w-40 md:h-40 rounded-full flex flex-col items-center justify-center text-center px-4"
+        style={{
+          background:
+            "radial-gradient(circle, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.7) 60%, transparent 100%)",
+          border: `1px solid ${theme.primary}cc`,
+          boxShadow: `0 0 60px ${theme.secondary}aa`,
+        }}
+      >
+        <p className="text-[10px] md:text-xs uppercase tracking-[0.25em] mb-1 text-gray-300">
+          Now Playing
+        </p>
+        <p className="text-xs md:text-sm font-semibold line-clamp-2">
+          {currentTrack.title}
+        </p>
+        <p className="text-[10px] md:text-xs text-gray-300 line-clamp-2 mt-1">
+          {currentTrack.singers}
+        </p>
+      </div>
+    </div>
+  )}
+</div>
+
+{/* 🔇 Hidden YT player element – audio only, no visual */}
+{isYouTube && (
+  <div className="hidden">
+    <div id="yt-player" />
+  </div>
+)}
+
 
               <div className="mt-6 flex flex-col items-center justify-center text-center h-[90px] md:h-[120px]">
                 <h1 className="text-2xl md:text-4xl lg:text-5xl font-black leading-tight line-clamp-2 px-4">
