@@ -338,6 +338,7 @@ function MusicApp({ user, onLogout }) {
   const [roomState, setRoomState] = useState(null); // mirrors row in `rooms`
   const [roomMembers, setRoomMembers] = useState([]); // people inside room
   const [inRoom, setInRoom] = useState(false);
+  const [needsRoomTap, setNeedsRoomTap] = useState(false);
 
   const audioRef = useRef(null);
   const isMobile =
@@ -801,11 +802,19 @@ function MusicApp({ user, onLogout }) {
         }
       }
 
+      // 🔊 Try to play – detect autoplay block
       if (room.is_playing) {
         audio
           .play()
-          .then(() => setIsPlaying(true))
-          .catch(() => setIsPlaying(false));
+          .then(() => {
+            setIsPlaying(true);
+            setNeedsRoomTap(false); // ✅ playback succeeded
+          })
+          .catch((err) => {
+            console.warn("Autoplay blocked, need user tap", err);
+            setIsPlaying(false);
+            setNeedsRoomTap(true); // ❌ show "tap to join audio"
+          });
       } else {
         audio.pause();
         setIsPlaying(false);
@@ -818,6 +827,7 @@ function MusicApp({ user, onLogout }) {
       }
       setCurrentTrack(null);
       setIsPlaying(false);
+      setNeedsRoomTap(false); // no song = nothing to tap for
     }
   };
 
@@ -2415,6 +2425,27 @@ function MusicApp({ user, onLogout }) {
                     <SkipForward />
                   </button>
                 </div>
+                {/* 🔔 Tap-to-join button for non-host room members */}
+                {inRoom && !isRoomOwner && needsRoomTap && (
+                  <button
+                    onClick={() => {
+                      const audio = audioRef.current;
+                      if (!audio) return;
+                      audio
+                        .play()
+                        .then(() => {
+                          setIsPlaying(true);
+                          setNeedsRoomTap(false);
+                        })
+                        .catch(() => {
+                          // still blocked, do nothing
+                        });
+                    }}
+                    className="mt-3 mx-auto block px-4 py-2 rounded-full bg-cyan-600/90 hover:bg-cyan-500 text-xs font-semibold"
+                  >
+                    Tap once to join room audio 🔊
+                  </button>
+                )}
 
                 {/* Secondary controls (heart, shuffle, download, repeat) */}
                 <div className="flex items-center justify-center gap-8 text-xl md:text-2xl">
