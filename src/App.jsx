@@ -339,6 +339,8 @@ function MusicApp({ user, onLogout }) {
   const [roomMembers, setRoomMembers] = useState([]); // people inside room
   const [inRoom, setInRoom] = useState(false);
   const [needsRoomTap, setNeedsRoomTap] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [playLatestOnLoad, setPlayLatestOnLoad] = useState(false);
 
   const audioRef = useRef(null);
   const isMobile =
@@ -355,14 +357,31 @@ function MusicApp({ user, onLogout }) {
         : "",
     []
   );
+  const showToast = (title, body) => {
+    setToast({ title, body });
+
+    // auto-hide in 3.5s
+    setTimeout(() => {
+      setToast((current) => {
+        // avoid clearing a new toast with an old timeout
+        if (!current) return null;
+        return null;
+      });
+    }, 3500);
+  };
   const shareRoom = () => {
     if (!roomId) return;
     const link = `${window.location.origin}${window.location.pathname}?room=${roomId}`;
 
     navigator.clipboard
       .writeText(link)
-      .then(() => alert("Room link copied!"))
-      .catch(() => alert("Room link: " + link));
+      .then(() => {
+        showToast("Room", "Room link copied to clipboard.");
+      })
+      .catch(() => {
+        showToast("Room", "Copy failed — link shown in console.");
+        console.log("Room link:", link);
+      });
   };
 
   const handleDeleteRoom = async () => {
@@ -400,11 +419,40 @@ function MusicApp({ user, onLogout }) {
         (params.toString() ? "?" + params.toString() : "");
       window.history.replaceState({}, "", newUrl);
 
-      alert("Room deleted ✅");
+      showToast("Room", "Room deleted for everyone ✅");
     } catch (e) {
       console.error("Delete room failed:", e);
-      alert("Failed to delete room");
+      showToast("Room", "Failed to delete room");
     }
+  };
+  const handleEnableNotifications = () => {
+    if (typeof window === "undefined") return;
+
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+
+    window.OneSignalDeferred.push(async function (OneSignal) {
+      try {
+        const result = await OneSignal.Notifications.requestPermission();
+
+        if (result === "granted") {
+          showToast("Notifications", "🔥 Notifications enabled for Saavnify!");
+        } else if (result === "denied") {
+          showToast(
+            "Notifications",
+            "Permission denied — change it in browser settings if you change your mind."
+          );
+        } else {
+          // "default" / dismissed
+          showToast("Notifications", "Permission request was dismissed.");
+        }
+      } catch (e) {
+        console.error("OneSignal permission error", e);
+        showToast(
+          "Notifications",
+          "Failed to request notification permission."
+        );
+      }
+    });
   };
 
   // Restore playback state on load
@@ -689,7 +737,7 @@ function MusicApp({ user, onLogout }) {
       setInRoom(true);
     } catch (e) {
       console.error("Create room failed", e);
-      alert("Could not create room");
+      showToast("Room", "Could not create room");
     }
   };
 
@@ -1144,9 +1192,34 @@ function MusicApp({ user, onLogout }) {
     inRoom && roomState && roomState.host_id === LOCAL_USER_ID;
 
   useEffect(() => {
-    searchSongs();
+    if (typeof window === "undefined") {
+      searchSongs();
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const promo = params.get("promo");
+
+    if (promo === "new_release") {
+      // Coming from a push for new releases
+      setPlayLatestOnLoad(true);
+      // You can tweak this query string for better results
+      searchSongs("latest bollywood songs");
+    } else {
+      // Normal behavior
+      searchSongs();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  useEffect(() => {
+    if (!playLatestOnLoad) return;
+    if (!tracks || tracks.length === 0) return;
+
+    // Auto-play first result
+    openPlayer(tracks[0]);
+    setPlayLatestOnLoad(false);
+  }, [playLatestOnLoad, tracks]);
+
   const playQueueTrackNow = async (track) => {
     if (!inRoom || !roomId || !roomState) return;
 
@@ -2168,8 +2241,16 @@ function MusicApp({ user, onLogout }) {
                       const link = `${window.location.origin}${window.location.pathname}?room=${roomId}`;
                       navigator.clipboard
                         .writeText(link)
-                        .then(() => alert("Room link copied!"))
-                        .catch(() => alert("Room link: " + link));
+                        .then(() => {
+                          showToast("Room", "Room link copied to clipboard.");
+                        })
+                        .catch(() => {
+                          showToast(
+                            "Room",
+                            "Copy failed — link shown in console."
+                          );
+                          console.log("Room link:", link);
+                        });
                     }}
                     className="w-full px-3 py-2 rounded-full bg-white/10 hover:bg-white/20 text-xs font-semibold mb-2"
                   >
@@ -2211,7 +2292,7 @@ function MusicApp({ user, onLogout }) {
                 Logout
               </button>
               <button
-                onClick={subscribeToPush}
+                onClick={handleEnableNotifications}
                 className="w-full px-3 py-2 rounded-full bg-cyan-500/90 hover:bg-cyan-500 text-xs font-semibold mt-2"
               >
                 Enable Notifications
@@ -2694,6 +2775,15 @@ function MusicApp({ user, onLogout }) {
           </div>
         </div>
       )}
+      {/* 🔔 Global in-app toast */}
+      {toast && (
+        <div className="fixed top-4 right-4 z-[9999] max-w-xs bg-black/90 border border-cyan-400/40 rounded-2xl px-4 py-3 shadow-lg">
+          <p className="text-xs text-cyan-300 font-semibold mb-1">
+            {toast.title || "Notification"}
+          </p>
+          <p className="text-xs text-gray-200">{toast.body}</p>
+        </div>
+      )}
     </>
   );
 }
@@ -2751,43 +2841,4 @@ export default function App() {
       }}
     />
   );
-}
-
-async function subscribeToPush() {
-  if (!("serviceWorker" in navigator)) {
-    alert("Browser doesn't support notifications");
-    return;
-  }
-
-  const permission = await Notification.requestPermission();
-  if (permission !== "granted") {
-    alert("Notifications permission denied ❌");
-    return;
-  }
-
-  const reg = await navigator.serviceWorker.ready;
-
-  // 👇 Replace with your real public VAPID from backend
-  const vapidPublicKey = "YOUR_PUBLIC_VAPID_KEY";
-
-  const converted = urlBase64ToUint8Array(vapidPublicKey);
-  const sub = await reg.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: converted,
-  });
-
-  await fetch("/api/save-subscription", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(sub),
-  });
-
-  alert("🔥 Notifications Enabled!");
-}
-
-function urlBase64ToUint8Array(base64String) {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const rawData = atob(base64);
-  return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
 }
