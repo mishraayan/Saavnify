@@ -2438,12 +2438,30 @@ function MusicApp({ user, onLogout }) {
                 </div>
               )}
 
-              <h1 className="text-2xl md:text-4xl lg:text-5xl font-black mt-6 text-center">
-                {currentTrack.title}
-              </h1>
-              <p className="text-lg md:text-xl text-gray-300 text-center">
-                {currentTrack.singers}
-              </p>
+              {/* Title + artist (fixed height so layout is consistent) */}
+              <div className="mt-6 mb-2 text-center h-20 md:h-24 flex flex-col items-center justify-center space-y-1">
+                <h1
+                  className="
+      text-2xl md:text-4xl lg:text-5xl
+      font-black
+      leading-tight
+      line-clamp-2
+      px-4
+    "
+                >
+                  {currentTrack.title}
+                </h1>
+                <p
+                  className="
+      text-lg md:text-xl
+      text-gray-300
+      line-clamp-1
+      px-4
+    "
+                >
+                  {currentTrack.singers}
+                </p>
+              </div>
 
               {/* Seek bar */}
               <div
