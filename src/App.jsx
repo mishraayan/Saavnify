@@ -2341,7 +2341,7 @@ function MusicApp({ user, onLogout }) {
             </button>
 
             {/* LEFT: Visualizer */}
-            <div className="flex-1 flex flex-col items-center justify-start pb-10  ">
+            <div className="flex-1 flex flex-col items-center justify-start pb-10 min-h-[calc(100vh-80px)]">
               <button
                 onClick={() => {
                   setVisualMode((m) => (m === "cover" ? "sphere" : "cover"));
@@ -2353,115 +2353,101 @@ function MusicApp({ user, onLogout }) {
                   ? "Sphere Visualizer"
                   : "Show Album Cover"}
               </button>
-
-              {visualMode === "cover" ? (
-                <img
-                  src={currentTrack.image_url}
-                  alt={currentTrack.title}
-                  className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
-                    isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
-                  }`}
-                  style={{
-                    boxShadow: `0 0 90px ${theme.primary}aa`,
-                    border: "3px solid rgba(255,255,255,0.25)",
-                  }}
-                />
-              ) : (
-                <div className="relative flex items-center justify-center w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem]">
-                  {!isMobile && (
-                    <Particles
-                      init={particlesInit}
-                      className="absolute inset-0"
-                      options={{
-                        fullScreen: { enable: false },
-                        background: { color: "transparent" },
-                        fpsLimit: 60,
-                        particles: {
-                          number: {
-                            value: 260,
-                            density: { enable: true, area: 800 },
-                          },
-                          color: { value: [theme.primary, theme.secondary] },
-                          size: { value: { min: 0.5, max: 2 } },
-                          opacity: {
-                            value: 0.9,
-                            animation: {
+              <div className="w-full flex items-center justify-center h-[260px] md:h-[340px] lg:h-[400px]">
+                {visualMode === "cover" ? (
+                  <img
+                    src={currentTrack.image_url}
+                    alt={currentTrack.title}
+                    className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
+                      isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
+                    }`}
+                    style={{
+                      boxShadow: `0 0 90px ${theme.primary}aa`,
+                      border: "3px solid rgba(255,255,255,0.25)",
+                    }}
+                  />
+                ) : (
+                  <div className="relative flex items-center justify-center w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem]">
+                    {!isMobile && (
+                      <Particles
+                        init={particlesInit}
+                        className="absolute inset-0"
+                        options={{
+                          fullScreen: { enable: false },
+                          background: { color: "transparent" },
+                          fpsLimit: 60,
+                          particles: {
+                            number: {
+                              value: 260,
+                              density: { enable: true, area: 800 },
+                            },
+                            color: { value: [theme.primary, theme.secondary] },
+                            size: { value: { min: 0.5, max: 2 } },
+                            opacity: {
+                              value: 0.9,
+                              animation: {
+                                enable: true,
+                                speed: 2,
+                                minimumValue: 0.2,
+                              },
+                            },
+                            move: {
                               enable: true,
-                              speed: 2,
-                              minimumValue: 0.2,
+                              speed: isPlaying ? 2.3 : 0.5,
+                              direction: "none",
+                              outModes: { default: "bounce" },
+                              random: true,
                             },
                           },
-                          move: {
-                            enable: true,
-                            speed: isPlaying ? 2.3 : 0.5,
-                            direction: "none",
-                            outModes: { default: "bounce" },
-                            random: true,
-                          },
-                        },
+                        }}
+                      />
+                    )}
+                    <div
+                      className="absolute inset-0 rounded-full"
+                      style={{
+                        boxShadow: `0 0 140px ${theme.primary}aa`,
+                        border: `2px solid ${theme.primary}55`,
+                        animation: isPlaying
+                          ? "beat 1.1s ease-in-out infinite"
+                          : "none",
                       }}
                     />
-                  )}
-                  <div
-                    className="absolute inset-0 rounded-full"
-                    style={{
-                      boxShadow: `0 0 140px ${theme.primary}aa`,
-                      border: `2px solid ${theme.primary}55`,
-                      animation: isPlaying
-                        ? "beat 1.1s ease-in-out infinite"
-                        : "none",
-                    }}
-                  />
-                  <div
-                    className="absolute inset-6 rounded-full"
-                    style={{ border: `1px solid ${theme.secondary}99` }}
-                  />
-                  <div
-                    className="relative w-32 h-32 md:w-40 md:h-40 rounded-full flex flex-col items-center justify-center text-center px-4"
-                    style={{
-                      background:
-                        "radial-gradient(circle, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.7) 60%, transparent 100%)",
-                      border: `1px solid ${theme.primary}cc`,
-                      boxShadow: `0 0 60px ${theme.secondary}aa`,
-                    }}
-                  >
-                    <p className="text-[10px] md:text-xs uppercase tracking-[0.25em] mb-1 text-gray-300">
-                      Now Playing
-                    </p>
-                    <p className="text-xs md:text-sm font-semibold line-clamp-2">
-                      {currentTrack.title}
-                    </p>
-                    <p className="text-[10px] md:text-xs text-gray-300 line-clamp-2 mt-1">
-                      {currentTrack.singers}
-                    </p>
+                    <div
+                      className="absolute inset-6 rounded-full"
+                      style={{ border: `1px solid ${theme.secondary}99` }}
+                    />
+                    <div
+                      className="relative w-32 h-32 md:w-40 md:h-40 rounded-full flex flex-col items-center justify-center text-center px-4"
+                      style={{
+                        background:
+                          "radial-gradient(circle, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.7) 60%, transparent 100%)",
+                        border: `1px solid ${theme.primary}cc`,
+                        boxShadow: `0 0 60px ${theme.secondary}aa`,
+                      }}
+                    >
+                      <p className="text-[10px] md:text-xs uppercase tracking-[0.25em] mb-1 text-gray-300">
+                        Now Playing
+                      </p>
+                      <p className="text-xs md:text-sm font-semibold line-clamp-2">
+                        {currentTrack.title}
+                      </p>
+                      <p className="text-[10px] md:text-xs text-gray-300 line-clamp-2 mt-1">
+                        {currentTrack.singers}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
 
-              {/* Title + artist (fixed height so layout is consistent) */}
-              <div className="mt-6 mb-2 text-center h-20 md:h-24 flex flex-col items-center justify-center space-y-1">
-                <h1
-                  className="
-      text-2xl md:text-4xl lg:text-5xl
-      font-black
-      leading-tight
-      line-clamp-2
-      px-4
-    "
-                >
+              <div className="mt-6 flex flex-col items-center justify-center text-center h-[90px] md:h-[120px]">
+                <h1 className="text-2xl md:text-4xl lg:text-5xl font-black leading-tight line-clamp-2 px-4">
                   {currentTrack.title}
                 </h1>
-                <p
-                  className="
-      text-lg md:text-xl
-      text-gray-300
-      line-clamp-1
-      px-4
-    "
-                >
+                <p className="text-lg md:text-xl text-gray-300 line-clamp-1 px-4 mt-1">
                   {currentTrack.singers}
                 </p>
               </div>
+              <div className="flex flex-col items-center justify-center h-[130px] md:h-[160px] gap-4">
 
               {/* Seek bar */}
               <div
@@ -2526,6 +2512,7 @@ function MusicApp({ user, onLogout }) {
                   >
                     <SkipForward />
                   </button>
+                </div>
                 </div>
                 {/* 🔔 Tap-to-join button for non-host room members */}
                 {inRoom && !isRoomOwner && needsRoomTap && (
