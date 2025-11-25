@@ -325,13 +325,23 @@ function MusicApp({ user, onLogout }) {
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [followLyrics, setFollowLyrics] = useState(true);
 
-  const audioRef = useRef(new Audio());
+  const audioRef = useRef(null);
 
-  const trackKey = useCallback((track) => 
-  track 
-    ? `${(track.title || "").toLowerCase().trim()}|${(track.singers || "").toLowerCase().trim()}`
-    : ""
-, []);
+  // Then inside openPlayer() — ADD THIS at the very top:
+  const audio = audioRef.current || new Audio();
+  if (!audioRef.current) {
+    audioRef.current = audio;
+  }
+
+  const trackKey = useCallback(
+    (track) =>
+      track
+        ? `${(track.title || "").toLowerCase().trim()}|${(track.singers || "")
+            .toLowerCase()
+            .trim()}`
+        : "",
+    []
+  );
   // Restore playback state on load
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -357,9 +367,8 @@ function MusicApp({ user, onLogout }) {
     }
   }, []);
   // helper to uniquely identify a track (for comments/downloads)
-  
 
-    // 👇 NEW STATE
+  // 👇 NEW STATE
   const [lyrics, setLyrics] = useState(null);
   const [syncedLyrics, setSyncedLyrics] = useState(null);
   const [currentLyricIndex, setCurrentLyricIndex] = useState(0);
@@ -838,15 +847,25 @@ function MusicApp({ user, onLogout }) {
   const openPlayer = (track) => {
     if (!track || !track.url) return;
 
+    // Lazy-create audio only when user clicks a song → mobile-safe
+    let audio = audioRef.current;
+    if (!audio) {
+      audio = new Audio();
+      audioRef.current = audio;
+    }
+
     setCurrentTrack(track);
     setShowPlayer(true);
-
-    const audio = audioRef.current;
     audio.src = track.url;
+
     audio
       .play()
-      .then(() => setIsPlaying(true))
-      .catch(() => console.log("Click play to start"));
+      .then(() => {
+        setIsPlaying(true);
+      })
+      .catch(() => {
+        setIsPlaying(false); // browser blocked autoplay → normal
+      });
 
     setQueue((prev) => {
       const base = prev.length ? prev : tracks;
@@ -879,11 +898,17 @@ function MusicApp({ user, onLogout }) {
 
   const handlePlayPause = () => {
     const audio = audioRef.current;
+    if (!audio) return;
+
     if (audio.paused) {
       audio
         .play()
-        .then(() => setIsPlaying(true))
-        .catch((e) => console.log("Play blocked:", e));
+        .then(() => {
+          setIsPlaying(true);
+        })
+        .catch(() => {
+          setIsPlaying(false);
+        });
     } else {
       audio.pause();
       setIsPlaying(false);
