@@ -2277,10 +2277,13 @@ function MusicApp({ user, onLogout }) {
                 <img
                   src={currentTrack.image_url}
                   alt={currentTrack.title}
-                  className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-3xl shadow-4xl border-8 border-white/20 object-cover ${
+                  className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
                     isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
                   }`}
-                  style={{ boxShadow: `0 0 90px ${theme.primary}aa` }}
+                  style={{
+                    boxShadow: `0 0 90px ${theme.primary}aa`,
+                    border: "3px solid rgba(255,255,255,0.25)",
+                  }}
                 />
               ) : (
                 <div className="relative flex items-center justify-center w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem]">
