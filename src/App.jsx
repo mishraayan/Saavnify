@@ -1101,11 +1101,49 @@ function MusicApp({ user, onLogout }) {
   }, [currentLyricIndex, followLyrics]);
   const isCurrentDJ =
     inRoom && roomState && roomState.current_dj === LOCAL_USER_ID;
+  const isRoomOwner =
+    inRoom && roomState && roomState.host_id === LOCAL_USER_ID;
 
   useEffect(() => {
     searchSongs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const playQueueTrackNow = async (track) => {
+    if (!inRoom || !roomId || !roomState) return;
+
+    if (!isRoomOwner) {
+      alert("Only the room owner can change the queue playback.");
+      return;
+    }
+
+    try {
+      const currentQueue = Array.isArray(roomState.queue)
+        ? [...roomState.queue]
+        : [];
+
+      const idx = currentQueue.findIndex((t) => t.id === track.id);
+      if (idx === -1) return;
+
+      const [chosen] = currentQueue.splice(idx, 1);
+
+      const nowIso = new Date().toISOString();
+
+      const { error } = await supabase
+        .from("rooms")
+        .update({
+          current_track: chosen,
+          queue: currentQueue,
+          is_playing: true,
+          started_at: nowIso,
+          last_activity: nowIso,
+        })
+        .eq("id", roomId);
+
+      if (error) throw error;
+    } catch (e) {
+      console.error("playQueueTrackNow failed", e);
+    }
+  };
 
   // ---------- PLAYER CONTROL ----------
   const openPlayer = async (track) => {
@@ -1228,6 +1266,43 @@ function MusicApp({ user, onLogout }) {
     const prevIndex = currentIndex > 0 ? currentIndex - 1 : 0;
     const prev = queue[prevIndex];
     if (prev) openPlayer(prev);
+  };
+  const handleRoomPlayPause = async () => {
+    if (!inRoom || !roomId || !roomState) return;
+
+    // Only the host can control playback
+    if (!isRoomOwner) {
+      alert("Only the room owner can control playback in this room.");
+      return;
+    }
+
+    try {
+      if (roomState.is_playing) {
+        // 🔇 Pause for everyone
+        const { error } = await supabase
+          .from("rooms")
+          .update({ is_playing: false })
+          .eq("id", roomId);
+
+        if (error) throw error;
+      } else {
+        // ▶ Resume for everyone
+        const nowIso = new Date().toISOString();
+
+        const { error } = await supabase
+          .from("rooms")
+          .update({
+            is_playing: true,
+            started_at: nowIso,
+            last_activity: nowIso,
+          })
+          .eq("id", roomId);
+
+        if (error) throw error;
+      }
+    } catch (e) {
+      console.error("Room play/pause failed", e);
+    }
   };
 
   const handlePlayPause = () => {
@@ -1488,9 +1563,17 @@ function MusicApp({ user, onLogout }) {
   const theme = getThemeForTrack(currentTrack);
 
   // ---------- QUEUE (UP NEXT) ----------
-  const currentIndex = queue.findIndex((t) => t.id === currentTrack?.id);
-  const upNext =
-    currentIndex >= 0 ? queue.slice(currentIndex + 1, currentIndex + 8) : [];
+  let upNext = [];
+
+  if (inRoom && roomState && Array.isArray(roomState.queue)) {
+    // In room: use shared room queue
+    upNext = roomState.queue.slice(0, 7);
+  } else {
+    // Normal local queue
+    const currentIndex = queue.findIndex((t) => t.id === currentTrack?.id);
+    upNext =
+      currentIndex >= 0 ? queue.slice(currentIndex + 1, currentIndex + 8) : [];
+  }
 
   // ---------- MOBILE NAV ----------
   const handleTabChange = (tab) => {
@@ -1855,10 +1938,10 @@ function MusicApp({ user, onLogout }) {
                   <SkipBack size={18} />
                 </button>
                 <button
-                  onClick={handlePlayPause}
-                  disabled={inRoom} // all control from room state, not local
+                  onClick={inRoom ? handleRoomPlayPause : handlePlayPause}
+                  disabled={inRoom && !isRoomOwner}
                   className={`w-9 h-9 rounded-full flex items-center justify-center ${
-                    inRoom
+                    inRoom && !isRoomOwner
                       ? "opacity-40 cursor-not-allowed"
                       : "hover:opacity-90"
                   }`}
@@ -1868,6 +1951,7 @@ function MusicApp({ user, onLogout }) {
                 >
                   {isPlaying ? <Pause size={18} /> : <Play size={18} />}
                 </button>
+
                 <button
                   onClick={!inRoom ? playNext : undefined}
                   disabled={inRoom}
@@ -2238,8 +2322,14 @@ function MusicApp({ user, onLogout }) {
 
                   {/* ▶ / ⏸ – still allowed in room (local play/pause) */}
                   <button
-                    onClick={handlePlayPause}
-                    className="w-14 h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center shadow-xl hover:opacity-90 transition"
+                    onClick={inRoom ? handleRoomPlayPause : handlePlayPause}
+                    disabled={inRoom && !isRoomOwner}
+                    className={
+                      "w-14 h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center shadow-xl transition " +
+                      (inRoom && !isRoomOwner
+                        ? "opacity-40 cursor-not-allowed"
+                        : "hover:opacity-90")
+                    }
                     style={{
                       background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
                       boxShadow: `0 0 80px ${theme.primary}aa`,
@@ -2471,8 +2561,21 @@ function MusicApp({ user, onLogout }) {
                 {upNext.map((track) => (
                   <button
                     key={track.id + track.title}
-                    onClick={() => openPlayer(track)}
-                    className="w-full flex items-center gap-3 rounded-2xl bg-white/5 hover:bg-white/10 p-2 text-left"
+                    onClick={
+                      inRoom
+                        ? isRoomOwner
+                          ? () => playQueueTrackNow(track)
+                          : undefined
+                        : () => openPlayer(track)
+                    }
+                    className={
+                      "w-full flex items-center gap-3 rounded-2xl p-2 text-left " +
+                      (inRoom
+                        ? isRoomOwner
+                          ? "bg-white/5 hover:bg-white/10"
+                          : "bg-white/5 opacity-70 cursor-not-allowed"
+                        : "bg-white/5 hover:bg-white/10")
+                    }
                   >
                     <img
                       src={track.image_url}
