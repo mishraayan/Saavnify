@@ -3,6 +3,7 @@ import axios from "axios";
 import Particles from "@tsparticles/react";
 import { loadFull } from "tsparticles";
 import { supabase } from "./lib/supabase";
+import { useCallback } from "react";
 import {
   Download,
   Play,
@@ -322,8 +323,15 @@ function MusicApp({ user, onLogout }) {
   const [selectedPlaylistId, setSelectedPlaylistId] = useState(null);
   const [playlistModalTrack, setPlaylistModalTrack] = useState(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
+  const [followLyrics, setFollowLyrics] = useState(true);
 
   const audioRef = useRef(new Audio());
+
+  const trackKey = useCallback((track) => 
+  track 
+    ? `${(track.title || "").toLowerCase().trim()}|${(track.singers || "").toLowerCase().trim()}`
+    : ""
+, []);
   // Restore playback state on load
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -349,14 +357,9 @@ function MusicApp({ user, onLogout }) {
     }
   }, []);
   // helper to uniquely identify a track (for comments/downloads)
-  const trackKey = (track) =>
-    track
-      ? `${(track.title || "").toLowerCase().trim()}|${(track.singers || "")
-          .toLowerCase()
-          .trim()}`
-      : "";
+  
 
-  // 👇 NEW STATE
+    // 👇 NEW STATE
   const [lyrics, setLyrics] = useState(null);
   const [syncedLyrics, setSyncedLyrics] = useState(null);
   const [currentLyricIndex, setCurrentLyricIndex] = useState(0);
@@ -581,66 +584,85 @@ function MusicApp({ user, onLogout }) {
       return;
     }
 
+    const key = trackKey(currentTrack);
+    const title = currentTrack.title?.trim();
+    const artist = currentTrack.singers?.trim();
+
+    // Skip fetch if we already have lyrics for this exact song
+    if (lyrics && currentTrack.lastLyricsKey === key) {
+      setLyricsLoading(false);
+      return;
+    }
+
     setLyricsLoading(true);
+    setLyrics(null);
+    setSyncedLyrics(null);
+
+    let cancelled = false;
 
     const fetchLyrics = async () => {
-      const title = currentTrack.title?.trim();
-      const artist = currentTrack.singers?.trim();
-
-      // Some tracks have no duration → don’t send duration=0
-      const durationSec =
-        currentTrack.duration > 0
-          ? Math.floor(currentTrack.duration / 1000)
-          : undefined;
-
-      if (!title || !artist) {
-        setLyrics("Lyrics not available");
-        setSyncedLyrics(null);
-        return;
-      }
-
-      // ─── 1. lrclib – best synced + plain lyrics (free, fast, works for Bollywood)
       try {
-        const params = { track_name: title, artist_name: artist };
-        if (durationSec) params.duration = durationSec; // ← only add if we have a real value
+        const durationSec =
+          currentTrack.duration > 0
+            ? Math.floor(currentTrack.duration / 1000)
+            : undefined;
 
-        const res = await axios.get("https://lrclib.net/api/get", {
-          params,
-          timeout: 8000,
-        });
+        // 1. lrclib.net (synced + plain)
+        try {
+          const params = { track_name: title, artist_name: artist };
+          if (durationSec) params.duration = durationSec;
 
-        if (res.data?.id) {
-          const plain = res.data.plainLyrics?.trim();
-          const synced = res.data.syncedLyrics?.trim();
-          setLyrics(plain || synced || "No lyrics found");
-          setSyncedLyrics(synced ? parseLrc(synced) : null);
-          return;
+          const res = await axios.get("https://lrclib.net/api/get", {
+            params,
+            timeout: 8000,
+          });
+
+          if (res.data?.id && !cancelled) {
+            const plain = res.data.plainLyrics?.trim();
+            const synced = res.data.syncedLyrics?.trim();
+
+            setLyrics(plain || synced || "No lyrics found");
+            setSyncedLyrics(synced ? parseLrc(synced) : null);
+            setCurrentTrack((prev) => ({ ...prev, lastLyricsKey: key }));
+            return;
+          }
+        } catch {
+          // ignore – try next source
         }
-      } catch {
-        // ignore – just try next source
-      }
 
-      // ─── 2. lyrics.ovh – plain lyrics, very reliable fallback
-      try {
-        const res = await axios.get(
-          `https://api.lyrics.ovh/v1/${encodeURIComponent(
-            artist
-          )}/${encodeURIComponent(title)}`
-        );
-        setLyrics(res.data.lyrics || "No lyrics found");
-        setSyncedLyrics(null);
-        return;
-      } catch {
-        // ignore
-      }
+        // 2. lyrics.ovh fallback
+        try {
+          const res = await axios.get(
+            `https://api.lyrics.ovh/v1/${encodeURIComponent(
+              artist
+            )}/${encodeURIComponent(title)}`
+          );
 
-      // ─── 3. If everything failed
-      setLyrics("Lyrics not available");
-      setSyncedLyrics(null);
+          if (!cancelled) {
+            setLyrics(res.data.lyrics || "No lyrics found");
+            setSyncedLyrics(null);
+            setCurrentTrack((prev) => ({ ...prev, lastLyricsKey: key }));
+          }
+        } catch {
+          // ignore
+        }
+
+        // 3. Final fallback
+        if (!cancelled) {
+          setLyrics("No lyrics found");
+          setSyncedLyrics(null);
+        }
+      } finally {
+        if (!cancelled) setLyricsLoading(false);
+      }
     };
 
-    fetchLyrics().finally(() => setLyricsLoading(false));
-  }, [currentTrack]);
+    fetchLyrics();
+
+    return () => {
+      cancelled = true; // prevents race condition when track changes fast
+    };
+  }, [trackKey(currentTrack), currentTrack?.duration]); // ← stable dependency
 
   // ----- LIBRARY LOAD/SAVE -----
   useEffect(() => {
@@ -797,13 +819,15 @@ function MusicApp({ user, onLogout }) {
   const activeLyricRef = useRef(null);
 
   useEffect(() => {
+    // only auto-scroll when followLyrics is enabled
+    if (!followLyrics) return;
     if (activeLyricRef.current) {
       activeLyricRef.current.scrollIntoView({
         behavior: "smooth",
         block: "center",
       });
     }
-  }, [currentLyricIndex]);
+  }, [currentLyricIndex, followLyrics]);
 
   useEffect(() => {
     searchSongs();
@@ -1492,12 +1516,14 @@ function MusicApp({ user, onLogout }) {
 
       {/* FULL PLAYER */}
       {showPlayer && currentTrack && (
-        <div className="fixed inset-0 bg-black text-white overflow-y-auto">
+        <div className="fixed inset-0 bg-black text-white overflow-y-auto relative">
           {/* Background particles */}
           <Particles
             init={particlesInit}
+            className="absolute inset-0 -z-10 pointer-events-none"
             options={{
-              fullScreen: { enable: true, zIndex: -1 },
+              fullScreen: { enable: false },
+              background: { color: "transparent" },
               particles: {
                 number: { value: 130 },
                 color: {
@@ -1548,12 +1574,11 @@ function MusicApp({ user, onLogout }) {
                 />
               ) : (
                 <div className="relative flex items-center justify-center w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem]">
-
                   <Particles
                     init={particlesInit}
                     className="absolute inset-0"
                     options={{
-                      fullScreen: { enable: true},
+                      fullScreen: { enable: false },
                       background: { color: "transparent" },
                       fpsLimit: 60,
                       particles: {
@@ -1716,43 +1741,62 @@ function MusicApp({ user, onLogout }) {
               </div>
 
               {/* Lyrics / Karaoke */}
-              <div className="mt-5 w-full max-w-md h-52 md:h-60 bg-white/5 border border-white/10 rounded-2xl p-4 overflow-y-auto text-center">
-                {lyricsLoading ? (
-                  <div className="flex items-center justify-center h-full gap-2">
-                    <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-                    <span className="text-gray-400 text-sm">
-                      Searching lyrics...
-                    </span>
-                  </div>
-                ) : syncedLyrics && syncedLyrics.length > 0 ? (
-                  syncedLyrics.map((line, i) => (
-                    <p
-                      key={i}
-                      ref={i === currentLyricIndex ? activeLyricRef : null}
-                      className={`my-2 transition-all duration-300 ${
-                        i === currentLyricIndex
-                          ? "text-cyan-300 font-bold text-lg"
-                          : i === currentLyricIndex - 1 ||
-                            i === currentLyricIndex + 1
-                          ? "text-gray-300"
-                          : "text-gray-500 text-sm"
-                      }`}
-                    >
-                      {line.text || "♪"}
+              <div className="mt-5 w-full max-w-md h-52 md:h-60 bg-white/5 border border-white/10 rounded-2xl p-4 text-center flex flex-col">
+                {/* Header row */}
+                <div className="flex items-center justify-between mb-2 text-left">
+                  <p className="text-xs font-semibold text-gray-300">Lyrics</p>
+                  <button
+                    onClick={() => setFollowLyrics((v) => !v)}
+                    className={`text-[10px] px-2 py-1 rounded-full border ${
+                      followLyrics
+                        ? "border-cyan-400 text-cyan-300 bg-cyan-400/10"
+                        : "border-gray-500 text-gray-400 bg-black/30"
+                    }`}
+                  >
+                    {followLyrics ? "Auto-scroll: On" : "Auto-scroll: Off"}
+                  </button>
+                </div>
+
+                {/* Scrollable area */}
+                <div className="flex-1 overflow-y-auto">
+                  {lyricsLoading ? (
+                    <div className="flex items-center justify-center h-full gap-2">
+                      <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-gray-400 text-sm">
+                        Searching lyrics...
+                      </span>
+                    </div>
+                  ) : syncedLyrics && syncedLyrics.length > 0 ? (
+                    syncedLyrics.map((line, i) => (
+                      <p
+                        key={i}
+                        ref={i === currentLyricIndex ? activeLyricRef : null}
+                        className={`my-2 transition-all duration-300 ${
+                          i === currentLyricIndex
+                            ? "text-cyan-300 font-bold text-lg"
+                            : i === currentLyricIndex - 1 ||
+                              i === currentLyricIndex + 1
+                            ? "text-gray-300"
+                            : "text-gray-500 text-sm"
+                        }`}
+                      >
+                        {line.text || "♪ ♪ ♪"}
+                      </p>
+                    ))
+                  ) : lyrics ? (
+                    lyrics.split("\n").map((l, i) => (
+                      <p key={i} className="my-1 text-gray-300">
+                        {l || "♪"}
+                      </p>
+                    ))
+                  ) : (
+                    <p className="text-gray-500">
+                      No lyrics found for this track
                     </p>
-                  ))
-                ) : lyrics ? (
-                  lyrics.split("\n").map((l, i) => (
-                    <p key={i} className="my-1 text-gray-300">
-                      {l || "♪"}
-                    </p>
-                  ))
-                ) : (
-                  <p className="text-gray-500">
-                    No lyrics found for this track
-                  </p>
-                )}
+                  )}
+                </div>
               </div>
+
               {/* Mini social / comments */}
 
               <div className="mt-8 w-full max-w-md bg-gradient-to-br from-[#0a0a0f] to-[#0b0c12] border border-white/10 rounded-3xl p-5 pb-6 backdrop-blur-2xl shadow-[0_0_40px_#00000060]">
@@ -1778,7 +1822,7 @@ function MusicApp({ user, onLogout }) {
                 </div>
 
                 {/* Comments */}
-                <div className="max-h-60 overflow-y-auto space-y-3 mb-4 pr-1 custom-scrollbar">
+                <div className="space-y-3 mb-4 pr-1">
                   {(comments[trackKey(currentTrack)] || []).length === 0 ? (
                     <div className="text-center py-10 animate-[fadeIn_0.4s_ease-out]">
                       <p className="text-gray-400 text-sm">No vibes yet</p>
@@ -1964,4 +2008,4 @@ function urlBase64ToUint8Array(base64String) {
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
   const rawData = atob(base64);
   return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
-} 
+}
