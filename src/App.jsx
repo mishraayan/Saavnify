@@ -716,9 +716,16 @@ function MusicApp({ user, onLogout }) {
         { onConflict: "room_id,user_id" }
       );
 
+      // make sure we have an Audio element ready
+      if (!audioRef.current) {
+        audioRef.current = new Audio();
+      }
+
       setRoomId(id);
-      setRoomState(room);
       setInRoom(true);
+
+      // 🔥 Immediately sync to current song (if any)
+      syncAudioWithRoom(room);
     } catch (e) {
       console.error("Join room failed", e);
       alert("Could not join room");
@@ -758,6 +765,62 @@ function MusicApp({ user, onLogout }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const syncAudioWithRoom = (room) => {
+    setRoomState(room);
+
+    // Make sure audio element exists
+    let audio = audioRef.current;
+    if (!audio) {
+      audio = new Audio();
+      audioRef.current = audio;
+    }
+
+    if (room.current_track) {
+      const track = room.current_track;
+
+      // Set track if changed
+      if (!currentTrack || currentTrack.id !== track.id) {
+        setCurrentTrack(track);
+        audio.src = track.url;
+      }
+
+      // Compute position from started_at
+      let pos = 0;
+      if (room.started_at) {
+        const started = new Date(room.started_at).getTime();
+        const now = Date.now();
+        pos = Math.max((now - started) / 1000, 0);
+      }
+
+      // Jump to that position
+      if (!isNaN(pos)) {
+        try {
+          audio.currentTime = pos;
+        } catch (e) {
+          console.warn("Failed to set currentTime", e);
+        }
+      }
+
+      if (room.is_playing) {
+        audio
+          .play()
+          .then(() => setIsPlaying(true))
+          .catch(() => setIsPlaying(false));
+      } else {
+        audio.pause();
+        setIsPlaying(false);
+      }
+    } else {
+      // No song in room
+      if (audio) {
+        audio.pause();
+        audio.currentTime = 0;
+      }
+      setCurrentTrack(null);
+      setIsPlaying(false);
+    }
+  };
+
   useEffect(() => {
     if (!roomId) return;
 
@@ -774,41 +837,7 @@ function MusicApp({ user, onLogout }) {
         },
         (payload) => {
           const room = payload.new;
-          setRoomState(room);
-
-          // sync playback with room.current_track
-          const audio = audioRef.current;
-          if (!audio) return;
-
-          if (room.current_track) {
-            const track = room.current_track;
-            // if we are not already on this track, load it
-            if (!currentTrack || currentTrack.id !== track.id) {
-              setCurrentTrack(track);
-              audio.src = track.url;
-            }
-
-            if (room.is_playing) {
-              // compute current position based on started_at
-              if (room.started_at) {
-                const started = new Date(room.started_at).getTime();
-                const now = Date.now();
-                const elapsedSec = Math.max((now - started) / 1000, 0);
-                audio.currentTime = elapsedSec;
-              }
-              audio
-                .play()
-                .then(() => setIsPlaying(true))
-                .catch(() => setIsPlaying(false));
-            } else {
-              audio.pause();
-              setIsPlaying(false);
-            }
-          } else {
-            // no song in room
-            setCurrentTrack(null);
-            setIsPlaying(false);
-          }
+          syncAudioWithRoom(room);
         }
       )
       .subscribe();
@@ -1270,31 +1299,41 @@ function MusicApp({ user, onLogout }) {
   const handleRoomPlayPause = async () => {
     if (!inRoom || !roomId || !roomState) return;
 
-    // Only the host can control playback
+    // Only the room owner can control playback
     if (!isRoomOwner) {
       alert("Only the room owner can control playback in this room.");
       return;
     }
 
+    const audio = audioRef.current;
+
     try {
       if (roomState.is_playing) {
-        // 🔇 Pause for everyone
-        const { error } = await supabase
-          .from("rooms")
-          .update({ is_playing: false })
-          .eq("id", roomId);
-
-        if (error) throw error;
-      } else {
-        // ▶ Resume for everyone
-        const nowIso = new Date().toISOString();
+        // 🔇 PAUSE — store current position in started_at
+        let newStartedAt = roomState.started_at;
+        if (audio && !isNaN(audio.currentTime)) {
+          const now = Date.now();
+          const offsetMs = audio.currentTime * 1000;
+          newStartedAt = new Date(now - offsetMs).toISOString();
+        }
 
         const { error } = await supabase
           .from("rooms")
           .update({
+            is_playing: false,
+            started_at: newStartedAt,
+            last_activity: new Date().toISOString(),
+          })
+          .eq("id", roomId);
+
+        if (error) throw error;
+      } else {
+        // ▶ RESUME — keep started_at so timeline continues
+        const { error } = await supabase
+          .from("rooms")
+          .update({
             is_playing: true,
-            started_at: nowIso,
-            last_activity: nowIso,
+            last_activity: new Date().toISOString(),
           })
           .eq("id", roomId);
 
@@ -1340,17 +1379,41 @@ function MusicApp({ user, onLogout }) {
     persistDownloads([currentTrack, ...filtered]);
   };
 
-  const handleSeek = (event) => {
+  const handleSeek = async (event) => {
     const audio = audioRef.current;
-    if (!audio || !audio.duration) return;
+    if (!audio) return;
 
     const rect = event.currentTarget.getBoundingClientRect();
     const clickX = event.clientX - rect.left;
     const pct = Math.min(Math.max(clickX / rect.width, 0), 1); // clamp 0–1
 
-    audio.currentTime = pct * audio.duration;
+    const newTime = audio.duration ? pct * audio.duration : 0;
+
+    // Always move locally
+    audio.currentTime = newTime;
     setProgress(pct * 100);
+
+    // In room & host → broadcast seek
+    if (inRoom && roomId && roomState && isRoomOwner) {
+      try {
+        const now = Date.now();
+        const startedAt = new Date(now - newTime * 1000).toISOString();
+
+        const { error } = await supabase
+          .from("rooms")
+          .update({
+            started_at: startedAt,
+            last_activity: new Date().toISOString(),
+          })
+          .eq("id", roomId);
+
+        if (error) throw error;
+      } catch (e) {
+        console.error("Room seek failed", e);
+      }
+    }
   };
+
   const deletePlaylist = (id) => {
     const next = playlists.filter((pl) => pl.id !== id);
     persistPlaylists(next);
