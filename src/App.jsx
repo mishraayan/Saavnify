@@ -88,22 +88,32 @@ function adaptSongs(data) {
 
 // ---------- LANDING SCREEN ----------
 function LandingScreen({ onGetStarted }) {
+  // simple mobile check
+  const isMobile =
+    typeof window !== "undefined"
+      ? window.matchMedia("(max-width: 768px)").matches
+      : false;
+
   return (
     <div className="min-h-screen relative overflow-hidden bg-gradient-to-br from-indigo-900 via-black to-purple-900 flex items-center justify-center">
-      <Particles
-        init={async (e) => await loadFull(e)}
-        options={{
-          fullScreen: { enable: true, zIndex: -1 },
-          particles: {
-            number: { value: 70 },
-            size: { value: { min: 1, max: 4 } },
-            color: { value: ["#38bdf8", "#ec4899", "#fbbf24"] },
-            move: { speed: 1.5 },
-            opacity: { value: 0.5 },
-          },
-        }}
-        className="absolute inset-0"
-      />
+      {/* ✨ Disable particles on mobile to avoid Aw Snap crashes */}
+      {!isMobile && (
+        <Particles
+          init={async (e) => await loadFull(e)}
+          options={{
+            fullScreen: { enable: true, zIndex: -1 },
+            particles: {
+              number: { value: 70 },
+              size: { value: { min: 1, max: 4 } },
+              color: { value: ["#38bdf8", "#ec4899", "#fbbf24"] },
+              move: { speed: 1.5 },
+              opacity: { value: 0.5 },
+            },
+          }}
+          className="absolute inset-0"
+        />
+      )}
+
       <div className="relative z-10 text-center px-6">
         <h1 className="text-4xl md:text-6xl font-black bg-gradient-to-r from-pink-500 via-cyan-400 to-emerald-400 bg-clip-text text-transparent mb-6">
           Welcome to Saavnify ULTRA
@@ -326,12 +336,10 @@ function MusicApp({ user, onLogout }) {
   const [followLyrics, setFollowLyrics] = useState(true);
 
   const audioRef = useRef(null);
-
-  // Then inside openPlayer() — ADD THIS at the very top:
-  const audio = audioRef.current || new Audio();
-  if (!audioRef.current) {
-    audioRef.current = audio;
-  }
+  const isMobile =
+    typeof window !== "undefined"
+      ? window.matchMedia("(max-width: 768px)").matches
+      : false;
 
   const trackKey = useCallback(
     (track) =>
@@ -343,6 +351,7 @@ function MusicApp({ user, onLogout }) {
     []
   );
   // Restore playback state on load
+  // restore playback
   useEffect(() => {
     if (typeof window === "undefined") return;
     const saved = window.localStorage.getItem("saavnify_playback");
@@ -355,17 +364,22 @@ function MusicApp({ user, onLogout }) {
         setQueue(state.queue || []);
         setProgress(state.progress || 0);
 
-        const audio = audioRef.current;
+        // ✅ ensure audio exists
+        let audio = audioRef.current;
+        if (!audio) {
+          audio = new Audio();
+          audioRef.current = audio;
+        }
+
         audio.src = state.currentTrack.url;
         audio.currentTime = state.currentTime || 0;
-
-        // Do NOT auto-play (browsers block without user gesture)
         setIsPlaying(false);
       }
     } catch (e) {
       console.log("Failed to restore playback:", e);
     }
   }, []);
+
   // helper to uniquely identify a track (for comments/downloads)
 
   // 👇 NEW STATE
@@ -414,7 +428,7 @@ function MusicApp({ user, onLogout }) {
       .subscribe();
 
     return () => supabase.removeChannel(channel);
-  }, [supabase]);
+  }, []);
 
   // Send comment
   const sendComment = async () => {
@@ -1005,12 +1019,13 @@ function MusicApp({ user, onLogout }) {
   // ---------- AUDIO EVENTS ----------
   useEffect(() => {
     const audio = audioRef.current;
+    if (!audio) return; // 👈 important, nothing to attach yet
+
     const onTimeUpdate = () => {
       if (!audio.duration) return;
       const pct = (audio.currentTime / audio.duration) * 100 || 0;
       setProgress(pct);
 
-      // 🔹 karaoke sync if we have timestamps
       if (syncedLyrics && syncedLyrics.length > 0) {
         const t = audio.currentTime;
         const idx = syncedLyrics.findIndex((line, i) => {
@@ -1023,7 +1038,6 @@ function MusicApp({ user, onLogout }) {
         }
       }
 
-      // Save compact playback state
       if (currentTrack) {
         const state = {
           currentTrack,
@@ -1050,6 +1064,7 @@ function MusicApp({ user, onLogout }) {
         playNext();
       }
     };
+
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
 
@@ -1064,7 +1079,7 @@ function MusicApp({ user, onLogout }) {
       audio.removeEventListener("play", onPlay);
       audio.removeEventListener("pause", onPause);
     };
-  }, [repeat, queue, currentTrack, shuffle]);
+  }, [repeat, queue, currentTrack, shuffle, syncedLyrics, currentLyricIndex]);
 
   const particlesInit = async (engine) => {
     await loadFull(engine);
@@ -1167,10 +1182,13 @@ function MusicApp({ user, onLogout }) {
                 Search
               </button>
               <button
+                // desktop logout
                 onClick={() => {
                   const audio = audioRef.current;
-                  audio.pause();
-                  audio.currentTime = 0;
+                  if (audio) {
+                    audio.pause();
+                    audio.currentTime = 0;
+                  }
                   setIsPlaying(false);
                   localStorage.removeItem("saavnify_user");
                   onLogout();
@@ -1542,24 +1560,27 @@ function MusicApp({ user, onLogout }) {
       {/* FULL PLAYER */}
       {showPlayer && currentTrack && (
         <div className="fixed inset-0 bg-black text-white overflow-y-auto relative">
-          {/* Background particles */}
-          <Particles
-            init={particlesInit}
-            className="absolute inset-0 -z-10 pointer-events-none"
-            options={{
-              fullScreen: { enable: false },
-              background: { color: "transparent" },
-              particles: {
-                number: { value: 130 },
-                color: {
-                  value: [theme.primary, theme.secondary, theme.accent],
+          {/* Background particles – ❌ skip on mobile */}
+          {!isMobile && (
+            <Particles
+              init={particlesInit}
+              className="absolute inset-0 -z-10 pointer-events-none"
+              options={{
+                fullScreen: { enable: false },
+                background: { color: "transparent" },
+                particles: {
+                  number: { value: 80 }, // a bit lighter than 130
+                  color: {
+                    value: [theme.primary, theme.secondary, theme.accent],
+                  },
+                  size: { value: { min: 1, max: 3 } },
+                  move: { speed: 2, direction: "none" },
+                  opacity: { value: 0.35 },
                 },
-                size: { value: { min: 1, max: 3 } },
-                move: { speed: 2, direction: "none" },
-                opacity: { value: 0.35 },
-              },
-            }}
-          />
+              }}
+            />
+          )}
+
           {offline && (
             <div className="absolute left-1/2 -translate-x-1/2 top-16 md:top-6 bg-yellow-500/20 border border-yellow-400/60 text-yellow-100 rounded-full px-4 py-1 text-[11px] z-40 ">
               Offline — streaming may fail, but your downloads are safe.
@@ -1599,38 +1620,40 @@ function MusicApp({ user, onLogout }) {
                 />
               ) : (
                 <div className="relative flex items-center justify-center w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem]">
-                  <Particles
-                    init={particlesInit}
-                    className="absolute inset-0"
-                    options={{
-                      fullScreen: { enable: false },
-                      background: { color: "transparent" },
-                      fpsLimit: 60,
-                      particles: {
-                        number: {
-                          value: 260,
-                          density: { enable: true, area: 800 },
-                        },
-                        color: { value: [theme.primary, theme.secondary] },
-                        size: { value: { min: 0.5, max: 2 } },
-                        opacity: {
-                          value: 0.9,
-                          animation: {
+                  {!isMobile && (
+                    <Particles
+                      init={particlesInit}
+                      className="absolute inset-0"
+                      options={{
+                        fullScreen: { enable: false },
+                        background: { color: "transparent" },
+                        fpsLimit: 60,
+                        particles: {
+                          number: {
+                            value: 260,
+                            density: { enable: true, area: 800 },
+                          },
+                          color: { value: [theme.primary, theme.secondary] },
+                          size: { value: { min: 0.5, max: 2 } },
+                          opacity: {
+                            value: 0.9,
+                            animation: {
+                              enable: true,
+                              speed: 2,
+                              minimumValue: 0.2,
+                            },
+                          },
+                          move: {
                             enable: true,
-                            speed: 2,
-                            minimumValue: 0.2,
+                            speed: isPlaying ? 2.3 : 0.5,
+                            direction: "none",
+                            outModes: { default: "bounce" },
+                            random: true,
                           },
                         },
-                        move: {
-                          enable: true,
-                          speed: isPlaying ? 2.3 : 0.5,
-                          direction: "none",
-                          outModes: { default: "bounce" },
-                          random: true,
-                        },
-                      },
-                    }}
-                  />
+                      }}
+                    />
+                  )}
                   <div
                     className="absolute inset-0 rounded-full"
                     style={{
