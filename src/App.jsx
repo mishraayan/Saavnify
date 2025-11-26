@@ -884,135 +884,128 @@ function MusicApp({ user, onLogout }) {
       setNeedsRoomTap(false); // no song = nothing to tap for
     }
   };
-useEffect(() => {
-  if (
-    !isYouTube ||
-    !currentTrack ||
-    currentTrack.source !== "yt" ||
-    !showPlayer
-  )
-    return;
+  useEffect(() => {
+    if (!isYouTube || !currentTrack || currentTrack.source !== "yt") return;
 
-  let playerInstance = null;
-  let cancelled = false;
+    let playerInstance = null;
+    let cancelled = false;
 
-  function startProgressTimer(player) {
-    if (ytProgressTimerRef.current) {
-      clearInterval(ytProgressTimerRef.current);
+    function startProgressTimer(player) {
+      if (ytProgressTimerRef.current) {
+        clearInterval(ytProgressTimerRef.current);
+      }
+
+      ytProgressTimerRef.current = setInterval(() => {
+        if (!player || typeof player.getCurrentTime !== "function") return;
+
+        const t = player.getCurrentTime() || 0;
+        const d = player.getDuration();
+
+        if (d && d > 0) {
+          setProgress((t / d) * 100);
+        }
+
+        // 🎤 karaoke sync using refs
+        const lyrics = syncedLyricsRef.current;
+        if (lyrics && lyrics.length > 0) {
+          const currentIdx = currentLyricIndexRef.current;
+
+          const idx = lyrics.findIndex((line, i) => {
+            const nextTime =
+              i === lyrics.length - 1 ? Infinity : lyrics[i + 1].time;
+            return t >= line.time && t < nextTime;
+          });
+
+          if (idx !== -1 && idx !== currentIdx) {
+            setCurrentLyricIndex(idx);
+          }
+        }
+      }, 500);
     }
 
-    ytProgressTimerRef.current = setInterval(() => {
-      if (!player || typeof player.getCurrentTime !== "function") return;
+    function createPlayer() {
+      if (cancelled) return;
 
-      const t = player.getCurrentTime() || 0;
-      const d = player.getDuration();
-
-      if (d && d > 0) {
-        setProgress((t / d) * 100);
-      }
-
-      // 🎤 karaoke sync using refs
-      const lyrics = syncedLyricsRef.current;
-      if (lyrics && lyrics.length > 0) {
-        const currentIdx = currentLyricIndexRef.current;
-
-        const idx = lyrics.findIndex((line, i) => {
-          const nextTime =
-            i === lyrics.length - 1 ? Infinity : lyrics[i + 1].time;
-          return t >= line.time && t < nextTime;
-        });
-
-        if (idx !== -1 && idx !== currentIdx) {
-          setCurrentLyricIndex(idx);
-        }
-      }
-    }, 500);
-  }
-
-  function createPlayer() {
-    if (cancelled) return;
-
-    playerInstance = new window.YT.Player("yt-player", {
-      videoId: currentTrack.id,
-      playerVars: {
-        autoplay: 1,
-        controls: 0,
-        rel: 0,
-        modestbranding: 1,
-      },
-      events: {
-        onReady: (e) => {
-          if (cancelled) return;
-          ytPlayerRef.current = e.target;
-
-          if (ytLastTime > 0) {
-            try {
-              e.target.seekTo(ytLastTime, true);
-            } catch (err) {
-              console.warn("Failed to seek YT on resume", err);
-            }
-          }
-
-          e.target.playVideo();
-          setIsPlaying(true);
-          startProgressTimer(e.target);
+      playerInstance = new window.YT.Player("yt-player", {
+        videoId: currentTrack.id,
+        playerVars: {
+          autoplay: 1,
+          controls: 0,
+          rel: 0,
+          modestbranding: 1,
         },
-        onStateChange: (e) => {
-          if (cancelled) return;
+        events: {
+          onReady: (e) => {
+            if (cancelled) return;
+            ytPlayerRef.current = e.target;
 
-          if (e.data === window.YT.PlayerState.PLAYING) {
+            if (ytLastTime > 0) {
+              try {
+                e.target.seekTo(ytLastTime, true);
+              } catch (err) {
+                console.warn("Failed to seek YT on resume", err);
+              }
+            }
+
+            e.target.playVideo();
             setIsPlaying(true);
-          } else if (
-            e.data === window.YT.PlayerState.PAUSED ||
-            e.data === window.YT.PlayerState.ENDED
-          ) {
-            setIsPlaying(false);
-          }
+            startProgressTimer(e.target);
+          },
+          onStateChange: (e) => {
+            if (cancelled) return;
 
-          if (e.data === window.YT.PlayerState.ENDED) {
-            if (repeat) {
-              e.target.seekTo(0, true);
-              e.target.playVideo();
-            } else {
-              playNext();
+            if (e.data === window.YT.PlayerState.PLAYING) {
+              setIsPlaying(true);
+            } else if (
+              e.data === window.YT.PlayerState.PAUSED ||
+              e.data === window.YT.PlayerState.ENDED
+            ) {
+              setIsPlaying(false);
             }
-          }
-        },
-      },
-    });
-  }
 
-  function onYouTubeIframeAPIReady() {
-    if (cancelled) return;
-    if (window.YT && window.YT.Player) {
+            if (e.data === window.YT.PlayerState.ENDED) {
+              if (repeat) {
+                e.target.seekTo(0, true);
+                e.target.playVideo();
+              } else {
+                playNext();
+              }
+            }
+          },
+        },
+      });
+    }
+
+    function onYouTubeIframeAPIReady() {
+      if (cancelled) return;
+      if (window.YT && window.YT.Player) {
+        createPlayer();
+      }
+    }
+
+    if (!window.YT || !window.YT.Player) {
+      const tag = document.createElement("script");
+      tag.src = "https://www.youtube.com/iframe_api";
+      document.body.appendChild(tag);
+      window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
+    } else {
       createPlayer();
     }
-  }
 
-  if (!window.YT || !window.YT.Player) {
-    const tag = document.createElement("script");
-    tag.src = "https://www.youtube.com/iframe_api";
-    document.body.appendChild(tag);
-    window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
-  } else {
-    createPlayer();
-  }
+    return () => {
+      cancelled = true;
 
-  return () => {
-    cancelled = true;
+      if (ytProgressTimerRef.current) {
+        clearInterval(ytProgressTimerRef.current);
+        ytProgressTimerRef.current = null;
+      }
 
-    if (ytProgressTimerRef.current) {
-      clearInterval(ytProgressTimerRef.current);
-      ytProgressTimerRef.current = null;
-    }
-
-    if (playerInstance && playerInstance.destroy) {
-      playerInstance.destroy();
-    }
-    ytPlayerRef.current = null;
-  };
-}, [isYouTube, currentTrack?.id, repeat, showPlayer, ytLastTime]);
-
+      if (playerInstance && playerInstance.destroy) {
+        playerInstance.destroy();
+      }
+      ytPlayerRef.current = null;
+    };
+  }, [isYouTube, currentTrack?.id, repeat, ytLastTime]);
 
   useEffect(() => {
     if (!roomId) return;
@@ -2596,15 +2589,12 @@ useEffect(() => {
                 if (isYouTube && ytPlayerRef.current) {
                   try {
                     const t = ytPlayerRef.current.getCurrentTime?.() || 0;
-                    setYtLastTime(t); // 👈 remember where we were
+                    setYtLastTime(t); // optional, for future resume
                   } catch (e) {
                     console.warn("Failed to read YT time", e);
                   }
-
-                  ytPlayerRef.current.pauseVideo?.();
-                  setIsPlaying(false);
                 }
-                setShowPlayer(false);
+                setShowPlayer(false); // 👈 only close UI, audio keeps playing
               }}
               className="absolute top-4 right-4 md:top-8 md:right-8 z-50 hover:scale-110 transition-transform"
             >
@@ -2613,115 +2603,107 @@ useEffect(() => {
 
             {/* LEFT: Visualizer */}
             <div className="flex-1 flex flex-col items-center justify-start pb-10 min-h-[calc(100vh-80px)]">
-      {!isYouTube && (
-  <button
-    onClick={() => {
-      setVisualMode((m) => (m === "cover" ? "sphere" : "cover"));
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }}
-    className="absolute top-4 left-4 md:top-8 md:left-8 z-50 px-4 py-2 rounded-full bg-white/10 border border-white/30 text-xs md:text-sm hover:bg-white/20 transition"
-  >
-    {visualMode === "cover"
-      ? "Sphere Visualizer"
-      : "Show Album Cover"}
-  </button>
-)}
+              {!isYouTube && (
+                <button
+                  onClick={() => {
+                    setVisualMode((m) => (m === "cover" ? "sphere" : "cover"));
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                  className="absolute top-4 left-4 md:top-8 md:left-8 z-50 px-4 py-2 rounded-full bg-white/10 border border-white/30 text-xs md:text-sm hover:bg-white/20 transition"
+                >
+                  {visualMode === "cover"
+                    ? "Sphere Visualizer"
+                    : "Show Album Cover"}
+                </button>
+              )}
 
-           <div className="w-full flex items-center justify-center h-[260px] md:h-[340px] lg:h-[400px]">
-  {isYouTube || visualMode === "cover" ? (
-    // 👇 Always show cover image for YT or normal cover mode
-    <img
-      src={currentTrack.image_url}
-      alt={currentTrack.title}
-      className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
-        isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
-      }`}
-      style={{
-        boxShadow: `0 0 90px ${theme.primary}aa`,
-        border: "3px solid rgba(255,255,255,0.25)",
-      }}
-    />
-  ) : (
-    // 🌌 Sphere visualizer (only for non-YT + visualMode === "sphere")
-    <div className="relative flex items-center justify-center w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem]">
-      {!isMobile && (
-        <Particles
-          init={particlesInit}
-          className="absolute inset-0"
-          options={{
-            fullScreen: { enable: false },
-            background: { color: "transparent" },
-            fpsLimit: 60,
-            particles: {
-              number: {
-                value: 260,
-                density: { enable: true, area: 800 },
-              },
-              color: { value: [theme.primary, theme.secondary] },
-              size: { value: { min: 0.5, max: 2 } },
-              opacity: {
-                value: 0.9,
-                animation: {
-                  enable: true,
-                  speed: 2,
-                  minimumValue: 0.2,
-                },
-              },
-              move: {
-                enable: true,
-                speed: isPlaying ? 2.3 : 0.5,
-                direction: "none",
-                outModes: { default: "bounce" },
-                random: true,
-              },
-            },
-          }}
-        />
-      )}
-      <div
-        className="absolute inset-0 rounded-full"
-        style={{
-          boxShadow: `0 0 140px ${theme.primary}aa`,
-          border: `2px solid ${theme.primary}55`,
-          animation: isPlaying
-            ? "beat 1.1s ease-in-out infinite"
-            : "none",
-        }}
-      />
-      <div
-        className="absolute inset-6 rounded-full"
-        style={{ border: `1px solid ${theme.secondary}99` }}
-      />
-      <div
-        className="relative w-32 h-32 md:w-40 md:h-40 rounded-full flex flex-col items-center justify-center text-center px-4"
-        style={{
-          background:
-            "radial-gradient(circle, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.7) 60%, transparent 100%)",
-          border: `1px solid ${theme.primary}cc`,
-          boxShadow: `0 0 60px ${theme.secondary}aa`,
-        }}
-      >
-        <p className="text-[10px] md:text-xs uppercase tracking-[0.25em] mb-1 text-gray-300">
-          Now Playing
-        </p>
-        <p className="text-xs md:text-sm font-semibold line-clamp-2">
-          {currentTrack.title}
-        </p>
-        <p className="text-[10px] md:text-xs text-gray-300 line-clamp-2 mt-1">
-          {currentTrack.singers}
-        </p>
-      </div>
-    </div>
-  )}
-</div>
-
-{/* 🔇 Hidden YT player element – audio only, no visual */}
-{isYouTube && (
-  <div className="hidden">
-    <div id="yt-player" />
-  </div>
-)}
-
+              <div className="w-full flex items-center justify-center h-[260px] md:h-[340px] lg:h-[400px]">
+                {isYouTube || visualMode === "cover" ? (
+                  // 👇 Always show cover image for YT or normal cover mode
+                  <img
+                    src={currentTrack.image_url}
+                    alt={currentTrack.title}
+                    className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
+                      isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
+                    }`}
+                    style={{
+                      boxShadow: `0 0 90px ${theme.primary}aa`,
+                      border: "3px solid rgba(255,255,255,0.25)",
+                    }}
+                  />
+                ) : (
+                  // 🌌 Sphere visualizer (only for non-YT + visualMode === "sphere")
+                  <div className="relative flex items-center justify-center w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem]">
+                    {!isMobile && (
+                      <Particles
+                        init={particlesInit}
+                        className="absolute inset-0"
+                        options={{
+                          fullScreen: { enable: false },
+                          background: { color: "transparent" },
+                          fpsLimit: 60,
+                          particles: {
+                            number: {
+                              value: 260,
+                              density: { enable: true, area: 800 },
+                            },
+                            color: { value: [theme.primary, theme.secondary] },
+                            size: { value: { min: 0.5, max: 2 } },
+                            opacity: {
+                              value: 0.9,
+                              animation: {
+                                enable: true,
+                                speed: 2,
+                                minimumValue: 0.2,
+                              },
+                            },
+                            move: {
+                              enable: true,
+                              speed: isPlaying ? 2.3 : 0.5,
+                              direction: "none",
+                              outModes: { default: "bounce" },
+                              random: true,
+                            },
+                          },
+                        }}
+                      />
+                    )}
+                    <div
+                      className="absolute inset-0 rounded-full"
+                      style={{
+                        boxShadow: `0 0 140px ${theme.primary}aa`,
+                        border: `2px solid ${theme.primary}55`,
+                        animation: isPlaying
+                          ? "beat 1.1s ease-in-out infinite"
+                          : "none",
+                      }}
+                    />
+                    <div
+                      className="absolute inset-6 rounded-full"
+                      style={{ border: `1px solid ${theme.secondary}99` }}
+                    />
+                    <div
+                      className="relative w-32 h-32 md:w-40 md:h-40 rounded-full flex flex-col items-center justify-center text-center px-4"
+                      style={{
+                        background:
+                          "radial-gradient(circle, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.7) 60%, transparent 100%)",
+                        border: `1px solid ${theme.primary}cc`,
+                        boxShadow: `0 0 60px ${theme.secondary}aa`,
+                      }}
+                    >
+                      <p className="text-[10px] md:text-xs uppercase tracking-[0.25em] mb-1 text-gray-300">
+                        Now Playing
+                      </p>
+                      <p className="text-xs md:text-sm font-semibold line-clamp-2">
+                        {currentTrack.title}
+                      </p>
+                      <p className="text-[10px] md:text-xs text-gray-300 line-clamp-2 mt-1">
+                        {currentTrack.singers}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               <div className="mt-6 flex flex-col items-center justify-center text-center h-[90px] md:h-[120px]">
                 <h1 className="text-2xl md:text-4xl lg:text-5xl font-black leading-tight line-clamp-2 px-4">
@@ -3062,6 +3044,13 @@ useEffect(() => {
           </div>
         </div>
       )}
+      {/* Hidden YouTube player – audio only, works for mini player too */}
+      {isYouTube && (
+        <div className="fixed -z-50 opacity-0 pointer-events-none">
+          <div id="yt-player" />
+        </div>
+      )}
+
       {/* 🔔 Global in-app toast */}
       {toast && (
         <div className="fixed top-4 right-4 z-[9999] max-w-xs bg-black/90 border border-cyan-400/40 rounded-2xl px-4 py-3 shadow-lg">
