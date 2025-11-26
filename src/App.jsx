@@ -347,6 +347,8 @@ function MusicApp({ user, onLogout }) {
   const ytProgressTimerRef = useRef(null);
 
   const ytPlayerRef = useRef(null);
+  const [showCanvas, setShowCanvas] = useState(false);
+  const ytCanvasRef = useRef(null);
 
   const audioRef = useRef(null);
   const isMobile =
@@ -923,58 +925,78 @@ function MusicApp({ user, onLogout }) {
       }, 500);
     }
 
-    function createPlayer() {
-      if (cancelled) return;
+   function createPlayer() {
+  if (cancelled) return;
 
-      playerInstance = new window.YT.Player("yt-player", {
-        videoId: currentTrack.id,
-        playerVars: {
-          autoplay: 1,
-          controls: 0,
-          rel: 0,
-          modestbranding: 1,
-        },
-        events: {
-          onReady: (e) => {
-            if (cancelled) return;
-            ytPlayerRef.current = e.target;
+  playerInstance = new window.YT.Player("yt-player", {
+    videoId: currentTrack.id,
+    playerVars: {
+      autoplay: 1,
+      controls: 0,
+      rel: 0,
+      modestbranding: 1,
+    },
+    events: {
+      onReady: (e) => {
+        if (cancelled) return;
+        ytPlayerRef.current = e.target;
 
-            if (ytLastTime > 0) {
-              try {
-                e.target.seekTo(ytLastTime, true);
-              } catch (err) {
-                console.warn("Failed to seek YT on resume", err);
-              }
+        if (ytLastTime > 0) {
+          try {
+            e.target.seekTo(ytLastTime, true);
+          } catch (err) {
+            console.warn("Failed to seek YT on resume", err);
+          }
+        }
+
+        e.target.playVideo();
+        setIsPlaying(true);
+        startProgressTimer(e.target);
+      },
+      onStateChange: (e) => {
+        if (cancelled) return;
+
+        const state = e.data;
+
+        if (state === window.YT.PlayerState.PLAYING) {
+          setIsPlaying(true);
+
+          // 🔄 keep canvas in sync → play
+          if (ytCanvasRef.current) {
+            try {
+              ytCanvasRef.current.playVideo();
+            } catch (ERR) {
+              console.warn(ERR);
             }
+          }
+        } else if (
+          state === window.YT.PlayerState.PAUSED ||
+          state === window.YT.PlayerState.ENDED
+        ) {
+          setIsPlaying(false);
 
+          // 🔄 keep canvas in sync → pause
+          if (ytCanvasRef.current) {
+            try {
+              ytCanvasRef.current.pauseVideo();
+            } catch (ERR) {
+              console.warn(ERR);
+            }
+          }
+        }
+
+        if (state === window.YT.PlayerState.ENDED) {
+          if (repeat) {
+            e.target.seekTo(0, true);
             e.target.playVideo();
-            setIsPlaying(true);
-            startProgressTimer(e.target);
-          },
-          onStateChange: (e) => {
-            if (cancelled) return;
-
-            if (e.data === window.YT.PlayerState.PLAYING) {
-              setIsPlaying(true);
-            } else if (
-              e.data === window.YT.PlayerState.PAUSED ||
-              e.data === window.YT.PlayerState.ENDED
-            ) {
-              setIsPlaying(false);
-            }
-
-            if (e.data === window.YT.PlayerState.ENDED) {
-              if (repeat) {
-                e.target.seekTo(0, true);
-                e.target.playVideo();
-              } else {
-                playNext();
-              }
-            }
-          },
-        },
-      });
-    }
+          } else {
+            playNext();
+          }
+        }
+      },
+    },
+  });
+}
 
     function onYouTubeIframeAPIReady() {
       if (cancelled) return;
@@ -1006,6 +1028,145 @@ function MusicApp({ user, onLogout }) {
       ytPlayerRef.current = null;
     };
   }, [isYouTube, currentTrack?.id, repeat, ytLastTime]);
+   
+
+// 🎥 Canvas background video for YT – loop middle 6 seconds, muted
+useEffect(() => {
+  // Only when:
+  // - current track is YT
+  // - full player is open
+  // - canvas mode is ON
+  if (
+    !isYouTube ||
+    !showCanvas ||
+    !showPlayer ||
+    !currentTrack ||
+    currentTrack.source !== "yt"
+  ) {
+    // Clean up if we leave this state
+    if (ytCanvasRef.current) {
+      try {
+        ytCanvasRef.current.stopVideo?.();
+        ytCanvasRef.current.destroy?.();
+      } catch (error) {
+        console.warn("Failed to destroy YT canvas player", error);
+      }
+      ytCanvasRef.current = null;
+    }
+    return;
+  }
+
+  if (typeof window === "undefined") return;
+
+  let cancelled = false;
+  let loopTimer = null;
+  let waitTimer = null;
+
+  function setupLoop(player) {
+    const trySetup = () => {
+      if (cancelled) return;
+
+      const duration = player.getDuration();
+      if (!duration || duration <= 0) {
+        setTimeout(trySetup, 500);
+        return;
+      }
+
+      const mid = duration * 0.4;
+      const loopStart = Math.max(mid - 3, 0);
+      const loopEnd = Math.min(loopStart + 6, duration);
+
+      player.mute();
+      player.seekTo(loopStart, true);
+      player.playVideo();
+
+      loopTimer = setInterval(() => {
+        if (cancelled) return;
+        const t = player.getCurrentTime();
+        if (t >= loopEnd) {
+          player.seekTo(loopStart, true);
+        }
+      }, 300);
+    };
+
+    trySetup();
+  }
+
+  function createCanvasPlayer() {
+    if (cancelled) return;
+
+    // Make sure our div is actually in the DOM
+    const host = document.getElementById("yt-canvas-player");
+    if (!host) {
+      console.warn("yt-canvas-player element not found");
+      return;
+    }
+
+    ytCanvasRef.current = new window.YT.Player("yt-canvas-player", {
+      videoId: currentTrack.id,
+      playerVars: {
+        autoplay: 1,
+        controls: 0,
+        mute: 1,
+        loop: 0,
+        rel: 0,
+        modestbranding: 1,
+        playsinline: 1,
+      },
+      events: {
+        onReady: (e) => {
+          if (cancelled) return;
+          setupLoop(e.target);
+        },
+        onStateChange: (e) => {
+          if (cancelled) return;
+          if (e.data === window.YT.PlayerState.ENDED) {
+            setupLoop(e.target);
+          }
+        },
+      },
+    });
+  }
+
+  function ensureApiAndCreate() {
+    if (window.YT && window.YT.Player) {
+      createCanvasPlayer();
+    } else {
+      waitTimer = setInterval(() => {
+        if (window.YT && window.YT.Player) {
+          clearInterval(waitTimer);
+          createCanvasPlayer();
+        }
+      }, 300);
+    }
+  }
+
+  ensureApiAndCreate();
+
+  return () => {
+    cancelled = true;
+    if (waitTimer) {
+      clearInterval(waitTimer);
+      waitTimer = null;
+    }
+    if (loopTimer) {
+      clearInterval(loopTimer);
+      loopTimer = null;
+    }
+    if (ytCanvasRef.current) {
+      try {
+        ytCanvasRef.current.stopVideo?.();
+        ytCanvasRef.current.destroy?.();
+      } catch (error) {
+        console.warn("Failed to clean YT canvas player", error);
+      }
+      ytCanvasRef.current = null;
+    }
+  };
+}, [isYouTube, showCanvas, showPlayer, currentTrack?.id]);
+
+
+
 
   useEffect(() => {
     if (!roomId) return;
@@ -1434,6 +1595,7 @@ function MusicApp({ user, onLogout }) {
       setYtLastTime(0);
       setProgress(0);
       setVisualMode("cover");
+       setShowCanvas(false);      
       // We are switching TO YouTube → stop HTML audio
       if (audioRef.current) {
         audioRef.current.pause();
@@ -1478,6 +1640,7 @@ function MusicApp({ user, onLogout }) {
 
     // From here down = normal AUDIO tracks (Saavn etc.)
     setIsYouTube(false);
+    setShowCanvas(false);
 
     // 🚪 2) ROOM MODE (shared listening for audio tracks)
     if (inRoom && roomId) {
@@ -2556,6 +2719,17 @@ function MusicApp({ user, onLogout }) {
       {/* FULL PLAYER */}
       {showPlayer && currentTrack && (
         <div className="fixed inset-0 bg-black text-white overflow-y-auto relative">
+        {isYouTube && showCanvas && (
+  <div className="absolute inset-0 z-0 overflow-hidden">
+    <div
+      id="yt-canvas-player"
+      className="w-full h-full object-cover"
+      style={{ pointerEvents: "none" }}
+    />
+    <div className="absolute inset-0 bg-black/35" />
+  </div>
+)}
+
           {/* Background particles – ❌ skip on mobile */}
           {!isMobile && (
             <Particles
@@ -2582,6 +2756,9 @@ function MusicApp({ user, onLogout }) {
               Offline — streaming may fail, but your downloads are safe.
             </div>
           )}
+          
+
+
 
           <div className="relative min-h-screen flex flex-col md:flex-row items-start md:items-start justify-center md:justify-between px-4 md:px-10 py-6 md:py-10 gap-8 md:gap-12">
             <button
@@ -2600,9 +2777,19 @@ function MusicApp({ user, onLogout }) {
             >
               <X size={34} />
             </button>
+                  {isYouTube && (
+                <button
+                  onClick={() => setShowCanvas((v) => !v)}
+                  className="absolute top-4 right-20 md:top-8 md:right-28 z-50 px-4 py-2 rounded-full bg-white/10 border border-white/30 text-xs md:text-sm hover:bg-white/20"
+                >
+                  {showCanvas ? "Music" : "Canvas"}
+                </button>
+              )}
 
             {/* LEFT: Visualizer */}
             <div className="flex-1 flex flex-col items-center justify-start pb-10 min-h-[calc(100vh-80px)]">
+                        
+
               {!isYouTube && (
                 <button
                   onClick={() => {
@@ -2616,22 +2803,35 @@ function MusicApp({ user, onLogout }) {
                     : "Show Album Cover"}
                 </button>
               )}
+        
 
-              <div className="w-full flex items-center justify-center h-[260px] md:h-[340px] lg:h-[400px]">
-                {isYouTube || visualMode === "cover" ? (
-                  // 👇 Always show cover image for YT or normal cover mode
-                  <img
-                    src={currentTrack.image_url}
-                    alt={currentTrack.title}
-                    className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
-                      isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
-                    }`}
-                    style={{
-                      boxShadow: `0 0 90px ${theme.primary}aa`,
-                      border: "3px solid rgba(255,255,255,0.25)",
-                    }}
-                  />
-                ) : (
+           <div className="relative w-full flex items-center justify-center h-[260px] md:h-[340px] lg:h-[400px] overflow-hidden">
+  {/* Canvas host is ALWAYS here; visibility controlled by showCanvas */}
+  <div
+    className={`absolute inset-0 -z-10 transition-opacity duration-500 ${
+      isYouTube && showCanvas
+        ? "opacity-60"
+        : "opacity-0 pointer-events-none"
+    }`}
+  >
+    <div id="yt-canvas-player" className="w-full h-full" />
+    {/* dark overlay so controls stay readable */}
+    <div className="absolute inset-0 bg-black/40" />
+  </div>
+
+  {isYouTube || visualMode === "cover" ? (
+    <img
+      src={currentTrack.image_url}
+      alt={currentTrack.title}
+      className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
+        isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
+      }`}
+      style={{
+        boxShadow: `0 0 90px ${theme.primary}aa`,
+        border: "3px solid rgba(255,255,255,0.25)",
+      }}
+    />
+  ) :  (
                   // 🌌 Sphere visualizer (only for non-YT + visualMode === "sphere")
                   <div className="relative flex items-center justify-center w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem]">
                     {!isMobile && (
@@ -2729,7 +2929,13 @@ function MusicApp({ user, onLogout }) {
               </div>
 
               {/* CONTROLS FIRST */}
-              <div className="sticky top-0 bg-black/80 backdrop-blur-lg pt-6 pb-4">
+              <div
+  className={`sticky top-0 pt-6 pb-4 flex flex-col items-center ${
+    isYouTube && showCanvas
+      ? "bg-transparent"                 // 👈 no big black rectangle on canvas
+      : "bg-black/80 backdrop-blur-lg"   // 👈 old style for normal mode
+  }`}
+>
                 {/* Main transport controls */}
                 <div className="flex items-center justify-center gap-6 text-2xl md:text-3xl">
                   {/* ⏮ PREV – disabled in room */}
