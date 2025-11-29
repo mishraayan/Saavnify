@@ -2138,9 +2138,11 @@ const openPlayer = useCallback(
   async (track, listContext = null) => {
     if (!track || !track.url) return;
 
-    // =============== YOUTUBE TRACKS ===============
-    // Always local (even if you're in a room). No Supabase, no room rules.
+    // ==========================
+    // 1) YOUTUBE TRACKS → ALWAYS LOCAL
+    // ==========================
     if (track.source === "yt") {
+      // reset yt state
       setYtLastTime(0);
       setProgress(0);
       setVisualMode("cover");
@@ -2155,9 +2157,9 @@ const openPlayer = useCallback(
       setIsYouTube(true);
       setCurrentTrack(track);
       setShowPlayer(true);
-      setIsPlaying(false); // iframe will flip this when ready
+      setIsPlaying(false); // iframe will update this
 
-      // build queue from context
+      // build queue (YT + rest of list)
       setQueue((prev) => {
         if (listContext && listContext.length) {
           const others = listContext.filter((t) => t.id !== track.id);
@@ -2168,14 +2170,16 @@ const openPlayer = useCallback(
         return [track, ...others];
       });
 
-      return; // ⬅️ important: no room logic, no audio element
+      return; // ⬅️ IMPORTANT: no room logic for YT
     }
 
-    // =============== NORMAL AUDIO TRACKS (Saavn etc.) ===============
+    // ==========================
+    // 2) NORMAL AUDIO TRACKS (Saavn, etc.)
+    // ==========================
     setIsYouTube(false);
     setShowCanvas(false);
 
-    // stop YT if switching back to normal audio
+    // stop YouTube player if active
     if (ytPlayerRef.current) {
       try {
         ytPlayerRef.current.pauseVideo?.();
@@ -2185,46 +2189,73 @@ const openPlayer = useCallback(
       }
     }
 
-    // ---------- ROOM MODE (shared listening via Supabase) ----------
+    // ==========================
+    // 3) ROOM MODE (shared listening)
+    // ==========================
     if (inRoom && roomId) {
-      // compute permissions from *latest* roomState + user
+      let freshRoom = roomState;
+
+      // 🔁 On mobile especially, roomState may not be ready yet.
+      //    Fetch the latest row from Supabase once here.
+      if (!freshRoom) {
+        try {
+          const { data: roomRow, error: roomErr } = await supabase
+            .from("rooms")
+            .select("*")
+            .eq("id", roomId)
+            .single();
+
+          if (!roomErr && roomRow) {
+            freshRoom = roomRow;
+            setRoomState(roomRow);
+          } else {
+            console.warn("Failed to fetch fresh room row:", roomErr);
+          }
+        } catch (e) {
+          console.warn("Room fetch in openPlayer failed:", e);
+        }
+      }
+
+      // compute permissions from *fresh* room row
       const amOwner =
-        !!(roomState && user?.id && roomState.host_id === user.id);
+        !!(freshRoom && user?.id && freshRoom.host_id === user.id);
       const amDj =
         amOwner ||
-        !!(roomState && user?.id && roomState.current_dj === user.id);
+        !!(freshRoom && user?.id && freshRoom.current_dj === user.id);
 
-      // Safety: if roomState not ready yet, don't block you forever
-      if (!roomState) {
-        console.warn("Room state not ready, falling back to local play.");
-      } else if (roomState.current_track) {
-        // There is already a current track → treat click as "add to queue"
-        if (!amDj) {
-          alert("Only the room host or current DJ can add to queue right now 🎲");
+      // ── Case A: we have a valid room row ─────────────────
+      if (freshRoom) {
+        // A1) there is already a current track → click = "add to queue"
+        if (freshRoom.current_track) {
+          if (!amDj) {
+            alert(
+              "Only the room host or current DJ can add to queue right now 🎲"
+            );
+            return;
+          }
+
+          try {
+            const currentQueue = Array.isArray(freshRoom.queue)
+              ? freshRoom.queue
+              : [];
+
+            const { error } = await supabase
+              .from("rooms")
+              .update({
+                queue: [...currentQueue, track],
+                last_activity: new Date().toISOString(),
+              })
+              .eq("id", roomId);
+
+            if (error) throw error;
+          } catch (e) {
+            console.error("Add to queue failed", e);
+          }
+
           return;
         }
 
-        try {
-          const currentQueue = Array.isArray(roomState.queue)
-            ? roomState.queue
-            : [];
-
-          const { error } = await supabase
-            .from("rooms")
-            .update({
-              queue: [...currentQueue, track],
-              last_activity: new Date().toISOString(),
-            })
-            .eq("id", roomId);
-
-          if (error) throw error;
-        } catch (e) {
-          console.error("Add to queue failed", e);
-        }
-
-        return;
-      } else {
-        // No current_track yet → this is the *first* song of the room
+        // A2) no current_track yet → this is the *first* song
         if (!amOwner) {
           alert("Only the room owner can start playback in this room.");
           return;
@@ -2246,7 +2277,7 @@ const openPlayer = useCallback(
               is_playing: true,
               started_at: nowIso,
               last_activity: nowIso,
-              current_dj: nextDj, // 🎲 DJ for the *next* pick
+              current_dj: nextDj, // DJ for the *next* pick
             })
             .eq("id", roomId);
 
@@ -2258,9 +2289,18 @@ const openPlayer = useCallback(
         // everyone (including you) will sync via realtime listener
         return;
       }
+
+      // ── Case B: freshRoom is still null → weird state ─────────────────
+      // Instead of blocking you, just fall back to local playback:
+      console.warn(
+        "Room state missing in openPlayer; falling back to local playback."
+      );
+      // no return here → we drop down into local behaviour below
     }
 
-    // ---------- LOCAL ONLY (not in a room, or no roomState) ----------
+    // ==========================
+    // 4) LOCAL ONLY (not in room OR room row missing)
+    // ==========================
     let audio = audioRef.current;
     if (!audio) {
       audio = new Audio();
@@ -2288,6 +2328,7 @@ const openPlayer = useCallback(
   },
   [inRoom, roomId, roomState, roomMembers, tracks, user?.id]
 );
+
 
 
 
