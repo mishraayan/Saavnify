@@ -2132,65 +2132,27 @@ const openPlayer = useCallback(
   async (track, listContext = null) => {
     if (!track || !track.url) return;
 
-    // 🔇 First, stop whatever was playing before
-   // 🎬 1) YOUTUBE TRACKS (local only, even if you're in a room)
-// They won't sync to room, but YOU can still listen.
-if (track.source === "yt") {
-  setYtLastTime(0);
-  setProgress(0);
-  setVisualMode("cover");
-  setShowCanvas(false);
-
-  // stop HTML audio when switching to YT
-  if (audioRef.current) {
-    audioRef.current.pause();
-    audioRef.current.currentTime = 0;
-  }
-
-  setIsYouTube(true);
-  setCurrentTrack(track);
-  setShowPlayer(true);
-  setIsPlaying(false); // iframe will set this when ready
-
-  setQueue((prev) => {
-    if (listContext && listContext.length) {
-      const others = listContext.filter((t) => t.id !== track.id);
-      return [track, ...others];
-    }
-    const base = prev.length ? prev : tracks;
-    const others = base.filter((t) => t.id !== track.id);
-    return [track, ...others];
-  });
-
-  return; // ⬅️ important
-}
- else {
-      // We are switching TO normal audio (Saavn etc.) → stop YouTube
-      if (ytPlayerRef.current) {
-        try {
-          ytPlayerRef.current.pauseVideo?.();
-          ytPlayerRef.current.stopVideo?.();
-        } catch (e) {
-          console.warn("Failed to stop YT player on switch", e);
-        }
-      }
-    }
-
-    // 🎬 1) YOUTUBE TRACKS (local only, no rooms yet)
+    // =============== YOUTUBE TRACKS ===============
+    // Always local, even if you're in a room
     if (track.source === "yt") {
-      if (inRoom) {
-        alert("YouTube tracks currently play only locally, not inside rooms.");
-        return;
+      // reset YT-related UI state
+      setYtLastTime(0);
+      setProgress(0);
+      setVisualMode("cover");
+      setShowCanvas(false);
+
+      // stop HTML5 audio when switching to YT
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
       }
 
-      // tell the UI we're in YouTube mode
       setIsYouTube(true);
-
       setCurrentTrack(track);
       setShowPlayer(true);
-      setIsPlaying(false); // YT iframe will set this to true onReady
+      setIsPlaying(false); // iframe will flip this to true onReady
 
-      // ✅ Queue built from context (playlist / search) if provided
+      // build queue from context
       setQueue((prev) => {
         if (listContext && listContext.length) {
           const others = listContext.filter((t) => t.id !== track.id);
@@ -2201,83 +2163,97 @@ if (track.source === "yt") {
         return [track, ...others];
       });
 
-      // ⛔ don't touch <audio> here, YT will be handled by iframe player
-      return;
+      return; // ⬅️ important: no room logic, no audio element
     }
 
-    // From here down = normal AUDIO tracks (Saavn etc.)
+    // =============== NORMAL AUDIO TRACKS (Saavn etc.) ===============
     setIsYouTube(false);
     setShowCanvas(false);
 
-    // 🚪 2) ROOM MODE (shared listening for audio tracks)
-    // 🚪 2) ROOM MODE (shared listening for audio tracks)
-if (inRoom && roomId) {
-  // If there is already a current_track in this room,
-  // treat this as "add to queue", not "start new song".
-  if (roomState && roomState.current_track) {
-    // Host OR DJ can add to queue
-    if (!isRoomOwner && !isCurrentDJ) {
-      alert("Only the room host or current DJ can add to queue right now 🎲");
+    // stop YT if we are switching FROM YT to normal audio
+    if (ytPlayerRef.current) {
+      try {
+        ytPlayerRef.current.pauseVideo?.();
+        ytPlayerRef.current.stopVideo?.();
+      } catch (e) {
+        console.warn("Failed to stop YT player on switch", e);
+      }
+    }
+
+    // ---------- ROOM MODE (shared listening via Supabase) ----------
+    if (inRoom && roomId) {
+      // compute permissions based on latest roomState
+      const amOwner =
+        !!(roomState && user?.id && roomState.host_id === user.id);
+      const amDj =
+        amOwner ||
+        !!(roomState && user?.id && roomState.current_dj === user.id);
+
+      // If a song is already playing in the room → treat click as "add to queue"
+      if (roomState && roomState.current_track) {
+        if (!amDj) {
+          alert("Only the room host or current DJ can add to queue right now 🎲");
+          return;
+        }
+
+        try {
+          const currentQueue = Array.isArray(roomState.queue)
+            ? roomState.queue
+            : [];
+
+          const { error } = await supabase
+            .from("rooms")
+            .update({
+              queue: [...currentQueue, track],
+              last_activity: new Date().toISOString(),
+            })
+            .eq("id", roomId);
+
+          if (error) throw error;
+        } catch (e) {
+          console.error("Add to queue failed", e);
+        }
+
+        return;
+      }
+
+      // No current_track yet → this is the *first* song of the room
+      // Only HOST can start first playback
+      if (!amOwner) {
+        alert("Only the room owner can start playback in this room.");
+        return;
+      }
+
+      try {
+        const nowIso = new Date().toISOString();
+
+        const nextDj =
+          roomMembers && roomMembers.length > 0
+            ? roomMembers[Math.floor(Math.random() * roomMembers.length)]
+                .user_id
+            : user?.id;
+
+        const { error } = await supabase
+          .from("rooms")
+          .update({
+            current_track: track,
+            is_playing: true,
+            started_at: nowIso,
+            last_activity: nowIso,
+            current_dj: nextDj, // 🎲 DJ for the *next* pick
+          })
+          .eq("id", roomId);
+
+        if (error) throw error;
+      } catch (e) {
+        console.error("Room play failed", e);
+      }
+
+      // everybody (including you) will sync via realtime
       return;
     }
 
-    try {
-      const currentQueue = Array.isArray(roomState.queue)
-        ? roomState.queue
-        : [];
-
-      const { error } = await supabase
-        .from("rooms")
-        .update({
-          queue: [...currentQueue, track],
-          last_activity: new Date().toISOString(),
-        })
-        .eq("id", roomId);
-
-      if (error) throw error;
-    } catch (e) {
-      console.error("Add to queue failed", e);
-    }
-
-    return;
-  }
-
-  // No current_track yet → this is the *first* song of the room
-  // 👉 Only the HOST can start the very first track
-  if (!isRoomOwner) {
-    alert("Only the room owner can start playback in this room.");
-    return;
-  }
-
-  try {
-    const nowIso = new Date().toISOString();
-
-    const nextDj =
-      roomMembers && roomMembers.length > 0
-        ? roomMembers[Math.floor(Math.random() * roomMembers.length)].user_id
-        : user?.id;
-
-    const { error } = await supabase
-      .from("rooms")
-      .update({
-        current_track: track,
-        is_playing: true,
-        started_at: nowIso,
-        last_activity: nowIso,
-        current_dj: nextDj, // DJ for the *next* pick
-      })
-      .eq("id", roomId);
-
-    if (error) throw error;
-  } catch (e) {
-    console.error("Room play failed", e);
-  }
-
-  return;
-}
-
-
-    // 🎧 3) NORMAL (non-room) behaviour — local audio
+    // ---------- LOCAL ONLY (not in a room) ----------
     let audio = audioRef.current;
     if (!audio) {
       audio = new Audio();
@@ -2290,14 +2266,9 @@ if (inRoom && roomId) {
 
     audio
       .play()
-      .then(() => {
-        setIsPlaying(true);
-      })
-      .catch(() => {
-        setIsPlaying(false);
-      });
+      .then(() => setIsPlaying(true))
+      .catch(() => setIsPlaying(false));
 
-    // ✅ Queue built from context (playlist / search / liked songs) if provided
     setQueue((prev) => {
       if (listContext && listContext.length) {
         const others = listContext.filter((t) => t.id !== track.id);
@@ -2308,7 +2279,7 @@ if (inRoom && roomId) {
       return [track, ...others];
     });
   },
-  [inRoom, roomId, roomState, isCurrentDJ, roomMembers, tracks, user?.id]
+  [inRoom, roomId, roomState, roomMembers, tracks, user?.id]
 );
 
 
