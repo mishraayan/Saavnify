@@ -1219,39 +1219,46 @@ const createRoom = async () => {
   if (!user) return;
 
   try {
+    // 👇 Make a nice room name so "name" is never null
+    const firstName =
+      (user.name || user.email || "User").split(" ")[0].trim();
+    const roomName = `${firstName}'s Room`;
+
     const { data: room, error: roomError } = await supabase
       .from("rooms")
       .insert({
+        name: roomName,          // 🔴 required NOT NULL column
         host_id: user.id,
-        current_track: null,
         is_playing: false,
+        current_track: null,
+        queue: [],               // if queue is jsonb NOT NULL, send []
       })
       .select()
       .single();
 
     if (roomError) throw roomError;
 
-    // 👇 host auto-joins as a member
+    // 👑 host auto-joins as member so they can control playback
     const { error: memberError } = await supabase
       .from("room_members")
       .insert({
         room_id: room.id,
         user_id: user.id,
-        user_name: user.name,
-        user_avatar: avatarUrl ?? null,
+        user_name: user.name || firstName || "Host",
+        user_avatar: avatarUrl || null,
       });
 
-    if (memberError) {
-      console.error("Insert into room_members failed:", memberError);
-    }
+    if (memberError) throw memberError;
 
+    // local state – adjust names to match your App.jsx
     setRoomId(room.id);
     setInRoom(true);
+    setRoomState(room); // if you already have roomState, keep this
   } catch (err) {
     console.error("createRoom failed:", err);
+    alert("Could not create room. Please try again.");
   }
 };
-
 
 
 
