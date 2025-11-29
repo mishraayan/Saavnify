@@ -2132,8 +2132,9 @@ const openPlayer = useCallback(
   async (track, listContext = null) => {
     if (!track || !track.url) return;
 
-    // =============== YOUTUBE TRACKS ===============
-    // Always local, even if you're in a room
+    // =========================
+    //   YOUTUBE TRACKS (LOCAL)
+    // =========================
     if (track.source === "yt") {
       // reset YT-related UI state
       setYtLastTime(0);
@@ -2150,9 +2151,9 @@ const openPlayer = useCallback(
       setIsYouTube(true);
       setCurrentTrack(track);
       setShowPlayer(true);
-      setIsPlaying(false); // iframe will flip this to true onReady
+      setIsPlaying(false); // iframe will set this when ready
 
-      // build queue from context
+      // build queue from context (search / playlist / library)
       setQueue((prev) => {
         if (listContext && listContext.length) {
           const others = listContext.filter((t) => t.id !== track.id);
@@ -2163,10 +2164,12 @@ const openPlayer = useCallback(
         return [track, ...others];
       });
 
-      return; // ⬅️ important: no room logic, no audio element
+      return; // ⬅️ important: no room logic for YT
     }
 
-    // =============== NORMAL AUDIO TRACKS (Saavn etc.) ===============
+    // =========================
+    //   NORMAL AUDIO TRACKS
+    // =========================
     setIsYouTube(false);
     setShowCanvas(false);
 
@@ -2180,80 +2183,75 @@ const openPlayer = useCallback(
       }
     }
 
-    // ---------- ROOM MODE (shared listening via Supabase) ----------
+    // =========================
+    //   ROOM MODE (SHARED)
+    // =========================
     if (inRoom && roomId) {
-      // compute permissions based on latest roomState
+      // compute permissions fresh from latest roomState
       const amOwner =
         !!(roomState && user?.id && roomState.host_id === user.id);
       const amDj =
         amOwner ||
         !!(roomState && user?.id && roomState.current_dj === user.id);
 
-      // If a song is already playing in the room → treat click as "add to queue"
-      if (roomState && roomState.current_track) {
-        if (!amDj) {
-          alert("Only the room host or current DJ can add to queue right now 🎲");
-          return;
-        }
-
-        try {
-          const currentQueue = Array.isArray(roomState.queue)
-            ? roomState.queue
-            : [];
-
-          const { error } = await supabase
-            .from("rooms")
-            .update({
-              queue: [...currentQueue, track],
-              last_activity: new Date().toISOString(),
-            })
-            .eq("id", roomId);
-
-          if (error) throw error;
-        } catch (e) {
-          console.error("Add to queue failed", e);
-        }
-
-        return;
-      }
-
-      // No current_track yet → this is the *first* song of the room
-      // Only HOST can start first playback
-      if (!amOwner) {
-        alert("Only the room owner can start playback in this room.");
+      if (!amDj) {
+        alert("Only the room host or current DJ can control playback in this room.");
         return;
       }
 
       try {
         const nowIso = new Date().toISOString();
 
-        const nextDj =
-          roomMembers && roomMembers.length > 0
-            ? roomMembers[Math.floor(Math.random() * roomMembers.length)]
-                .user_id
-            : user?.id;
+        const currentQueue = Array.isArray(roomState?.queue)
+          ? roomState.queue
+          : [];
 
-        const { error } = await supabase
-          .from("rooms")
-          .update({
-            current_track: track,
-            is_playing: true,
-            started_at: nowIso,
-            last_activity: nowIso,
-            current_dj: nextDj, // 🎲 DJ for the *next* pick
-          })
-          .eq("id", roomId);
+        const hasCurrent = !!roomState?.current_track;
 
-        if (error) throw error;
+        if (!hasCurrent) {
+          // 🟢 FIRST SONG IN ROOM (this is the case that was failing for you)
+          const members = roomMembers || [];
+          const nextDj =
+            members.length > 0
+              ? members[Math.floor(Math.random() * members.length)].user_id
+              : user?.id;
+
+          const { error } = await supabase
+            .from("rooms")
+            .update({
+              current_track: track,
+              queue: currentQueue,
+              is_playing: true,
+              started_at: nowIso,
+              last_activity: nowIso,
+              current_dj: nextDj, // next DJ for future picks
+            })
+            .eq("id", roomId);
+
+          if (error) throw error;
+        } else {
+          // 🎵 SONG ALREADY PLAYING → ADD TO QUEUE
+          const { error } = await supabase
+            .from("rooms")
+            .update({
+              queue: [...currentQueue, track],
+              last_activity: nowIso,
+            })
+            .eq("id", roomId);
+
+          if (error) throw error;
+        }
       } catch (e) {
         console.error("Room play failed", e);
       }
 
-      // everybody (including you) will sync via realtime
+      // everyone (including host) will sync via realtime + syncAudioWithRoom
       return;
     }
 
-    // ---------- LOCAL ONLY (not in a room) ----------
+    // =========================
+    //   LOCAL ONLY (NO ROOM)
+    // =========================
     let audio = audioRef.current;
     if (!audio) {
       audio = new Audio();
@@ -2266,8 +2264,12 @@ const openPlayer = useCallback(
 
     audio
       .play()
-      .then(() => setIsPlaying(true))
-      .catch(() => setIsPlaying(false));
+      .then(() => {
+        setIsPlaying(true);
+      })
+      .catch(() => {
+        setIsPlaying(false);
+      });
 
     setQueue((prev) => {
       if (listContext && listContext.length) {
@@ -2281,6 +2283,7 @@ const openPlayer = useCallback(
   },
   [inRoom, roomId, roomState, roomMembers, tracks, user?.id]
 );
+
 
 
 
