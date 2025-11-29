@@ -1211,101 +1211,99 @@ if (!user?.id || roomState.host_id !== user.id) {
       window.removeEventListener("offline", goOffline);
     };
   }, []);
-  // --- ROOM HELPERS ---
+
 
  // --- ROOM HELPERS ---
 
 const createRoom = async () => {
-  try {
-    if (!user?.id) {
-      alert("You must be logged in to create a room.");
-      return;
-    }
+  if (!user) return;
 
-    // 1️⃣ Create the room row
-    const { data, error } = await supabase
+  try {
+    const { data: room, error: roomError } = await supabase
       .from("rooms")
       .insert({
-        name: `${user.name || "Guest"}'s room`,
-        current_dj: user.id,
         host_id: user.id,
+        current_track: null,
+        is_playing: false,
       })
       .select()
       .single();
 
-    if (error) throw error;
+    if (roomError) throw roomError;
 
-    // 2️⃣ Add / upsert yourself as member
-    await supabase.from("room_members").upsert(
+    // 👇 host auto-joins as a member
+    const { error: memberError } = await supabase
+      .from("room_members")
+      .insert({
+        room_id: room.id,
+        user_id: user.id,
+        user_name: user.name,
+        user_avatar: avatarUrl ?? null,
+      });
+
+    if (memberError) {
+      console.error("Insert into room_members failed:", memberError);
+    }
+
+    setRoomId(room.id);
+    setInRoom(true);
+  } catch (err) {
+    console.error("createRoom failed:", err);
+  }
+};
+
+
+
+
+const joinRoom = async (id) => {
+  try {
+    // ✅ make sure room exists
+    const { data: room, error } = await supabase
+      .from("rooms")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (error || !room) {
+      alert("Room not found");
+      return;
+    }
+
+    if (!user?.id) {
+      alert("You must be logged in to join a room.");
+      return;
+    }
+
+    // ✅ upsert membership (host + members)
+    const { error: memberErr } = await supabase.from("room_members").upsert(
       {
-        room_id: data.id,
+        room_id: id,
         user_id: user.id,
         last_seen: new Date().toISOString(),
       },
       { onConflict: "room_id,user_id" }
     );
 
-    // 3️⃣ Put room id in URL
-    const params = new URLSearchParams(window.location.search);
-    params.set("room", data.id);
-    const newUrl = window.location.pathname + "?" + params.toString();
-    window.history.replaceState({}, "", newUrl);
+    if (memberErr) {
+      console.error("room_members upsert failed", memberErr);
+      // but don't block joining – room playback can still work
+    }
 
-    // 4️⃣ 🔥 IMPORTANT: treat the creator like any other client
-    //    Reuse joinRoom() so roomState, inRoom, audio, etc are consistent.
-    await joinRoom(data.id);
+    // ✅ make sure we have an Audio element ready
+    if (!audioRef.current) {
+      audioRef.current = new Audio();
+    }
+
+    setRoomId(id);
+    setInRoom(true);
+
+    // this also sets local roomState & syncs audio
+    syncAudioWithRoom(room);
   } catch (e) {
-    console.error("Create room failed", e);
-    showToast("Room", "Could not create room");
+    console.error("Join room failed", e);
+    alert("Could not join room");
   }
 };
-
-
-  const joinRoom = async (id) => {
-    try {
-      // make sure room exists
-      const { data: room, error } = await supabase
-        .from("rooms")
-        .select("*")
-        .eq("id", id)
-        .single();
-
-      if (error || !room) {
-        alert("Room not found");
-        return;
-      }
-
-      // upsert membership
-   if (!user?.id) {
-  alert("You must be logged in to join a room.");
-  return;
-}
-
-await supabase.from("room_members").upsert(
-  {
-    room_id: id,
-    user_id: user.id,
-    last_seen: new Date().toISOString(),
-  },
-  { onConflict: "room_id,user_id" }
-);
-
-
-      // make sure we have an Audio element ready
-      if (!audioRef.current) {
-        audioRef.current = new Audio();
-      }
-
-      setRoomId(id);
-      setInRoom(true);
-
-      // 🔥 Immediately sync to current song (if any)
-      syncAudioWithRoom(room);
-    } catch (e) {
-      console.error("Join room failed", e);
-      alert("Could not join room");
-    }
-  };
 
   const leaveRoom = async () => {
     if (!roomId) return;
