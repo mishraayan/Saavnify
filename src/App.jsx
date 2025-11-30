@@ -2406,74 +2406,54 @@ const playPrev = useCallback(() => {
 const handleRoomPlayPause = async () => {
   if (!inRoom || !roomId || !roomState) return;
 
-  // Only host can control room state
+  // Only the room owner can control playback
   if (!isRoomOwner) {
     alert("Only the room owner can control playback in this room.");
     return;
   }
 
   const audio = audioRef.current;
-  if (!audio || !currentTrack) return;
+  if (!audio) return;
 
-  const wantsPlay = audio.paused; // true → we want to play, false → pause
+  // 🔁 Decide next state from roomState, NOT from audio.paused
+  const wantsPlay = !roomState.is_playing;
+
+  // Compute started_at so everyone stays in sync when they resume
+  const now = Date.now();
+  const offsetMs =
+    !isNaN(audio.currentTime) && isFinite(audio.currentTime)
+      ? audio.currentTime * 1000
+      : 0;
+  const startedAt = new Date(now - offsetMs).toISOString();
 
   try {
-    if (!wantsPlay) {
-      // 🔇 PAUSE
-      audio.pause();
-      setIsPlaying(false);
+    const patch = {
+      is_playing: wantsPlay,
+      started_at: startedAt,
+      last_activity: new Date().toISOString(),
+    };
 
-      // recompute started_at so resume time is correct for everyone
-      let newStartedAt = roomState.started_at;
-      if (!isNaN(audio.currentTime)) {
-        const now = Date.now();
-        const offsetMs = audio.currentTime * 1000;
-        newStartedAt = new Date(now - offsetMs).toISOString();
-      }
-
-      const { error } = await supabase
-        .from("rooms")
-        .update({
-          is_playing: false,
-          started_at: newStartedAt,
-          last_activity: new Date().toISOString(),
-        })
-        .eq("id", roomId);
-
-      if (error) throw error;
-    } else {
-      // ▶ PLAY
-      try {
-        await audio.play();
-        setIsPlaying(true);
-      } catch (err) {
-        console.warn("Host play blocked", err);
-        setNeedsRoomTap(true);
-        return;
-      }
-
-      const now = Date.now();
-      const offsetMs = audio.currentTime * 1000;
-      const startedAt = new Date(now - offsetMs).toISOString();
-
-      const { error } = await supabase
-        .from("rooms")
-        .update({
-          is_playing: true,
-          started_at: startedAt,
-          last_activity: new Date().toISOString(),
-          current_dj: user.id,
-          current_dj_name: user.name || null,
-          current_dj_avatar: avatarUrl || null,
-        })
-        .eq("id", roomId);
-
-      if (error) throw error;
+    // If we are switching to PLAY, also set current_dj
+    if (wantsPlay && user?.id) {
+      patch.current_dj = user.id;
+      patch.current_dj_name = user.name || null;
+      patch.current_dj_avatar = avatarUrl || null;
     }
+
+    const { error } = await supabase
+      .from("rooms")
+      .update(patch)
+      .eq("id", roomId);
+
+    if (error) throw error;
+
+    // ❌ No direct audio.play() / pause() here.
+    // Guests + host will react via syncAudioWithRoom(room).
   } catch (e) {
     console.error("Room play/pause failed", e);
   }
 };
+
 
 
 
