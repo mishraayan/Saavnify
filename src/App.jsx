@@ -3714,10 +3714,7 @@ useEffect(() => {
             </div>
           )}
 
-          <div
-    className="relative flex flex-col md:flex-row items-start md:items-start justify-center md:justify-between px-4 md:px-10 py-6 md:py-10 gap-8 md:gap-12"
-    style={{ minHeight: "100dvh" }}   // 🔥 key line
-  >
+          <div className="relative min-h-screen flex flex-col md:flex-row items-start md:items-start justify-center md:justify-between px-4 md:px-10 py-6 md:py-10 gap-8 md:gap-12">
             <button
               onClick={() => {
                 // For YT, just close the UI. Let the hidden #yt-player keep playing.
@@ -3753,7 +3750,7 @@ useEffect(() => {
                 </button>
               )}
 
-              <div className="relative w-full flex items-center justify-center h-[220px] sm:h-[260px] md:h-[340px] lg:h-[400px] overflow-hidden">
+              <div className="relative w-full flex items-center justify-center h-[260px] md:h-[340px] lg:h-[400px] overflow-hidden">
                 {/* Canvas host is ALWAYS here; visibility controlled by showCanvas */}
                 <div
                   className={`absolute inset-0 -z-10 transition-opacity duration-500 ${
@@ -3771,7 +3768,7 @@ useEffect(() => {
                   <img
                     src={currentTrack.image_url}
                     alt={currentTrack.title}
-                    className={`w-48 h-48 sm:w-56 sm:h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
+                    className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
                       isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
                     }`}
                     style={{
@@ -3853,30 +3850,28 @@ useEffect(() => {
                 )}
               </div>
 
-           <div className="mt-6 flex flex-col items-center justify-center text-center px-4 space-y-1">
-  <h1 className="text-xl sm:text-2xl md:text-4xl lg:text-5xl font-black leading-tight line-clamp-2">
-    {currentTrack.title}
-  </h1>
-  <p className="text-sm sm:text-base md:text-xl text-gray-300 line-clamp-1">
-    {currentTrack.singers}
-  </p>
-</div>
-
+              <div className="mt-6 flex flex-col items-center justify-center text-center h-[90px] md:h-[120px]">
+                <h1 className="text-2xl md:text-4xl lg:text-5xl font-black leading-tight line-clamp-2 px-4">
+                  {currentTrack.title}
+                </h1>
+                <p className="text-lg md:text-xl text-gray-300 line-clamp-1 px-4 mt-1">
+                  {currentTrack.singers}
+                </p>
+              </div>
 
               {/* Seek bar */}
-          <div
-  className="w-full max-w-xs md:max-w-md h-2 bg-white/20 rounded-full mt-6 overflow-hidden cursor-pointer"
-  onClick={handleSeek}
->
-  <div
-    className="h-full transition-all"
-    style={{
-      width: `${progress}%`,
-      background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
-    }}
-  />
-</div>
-
+              <div
+                className="w-64 md:w-80 h-2 bg-white/20 rounded-full mt-6 overflow-hidden cursor-pointer"
+                onClick={handleSeek}
+              >
+                <div
+                  className="h-full transition-all"
+                  style={{
+                    width: `${progress}%`,
+                    background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
+                  }}
+                />
+              </div>
 
               {/* CONTROLS FIRST */}
               <div
