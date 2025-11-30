@@ -1787,6 +1787,8 @@ useEffect(() => {
   let cancelled = false;
 
   const fetchLyrics = async () => {
+    let foundLyrics = false; // ✅ local flag, not React state
+
     try {
       const title = currentTrack.title?.trim() || "";
       const artist = currentTrack.singers?.trim() || "";
@@ -1797,31 +1799,49 @@ useEffect(() => {
         if (durationSec) params.duration = durationSec;
 
         const r = await axios.get("https://lrclib.net/api/get", { params });
-        if (!cancelled && r.data?.id) {
-          if (r.data.syncedLyrics) setSyncedLyrics(parseLrc(r.data.syncedLyrics));
-          if (r.data.plainLyrics) setLyrics(r.data.plainLyrics);
 
-          setLyricsCacheKey(currentTrackKey);
-          setLyricsRetryCount(0);
-          return;
+        if (!cancelled && r.data?.id) {
+          if (r.data.syncedLyrics) {
+            const parsed = parseLrc(r.data.syncedLyrics);
+            if (parsed && parsed.length) {
+              setSyncedLyrics(parsed);
+              foundLyrics = true;
+            }
+          }
+
+          if (!foundLyrics && r.data.plainLyrics) {
+            setLyrics(r.data.plainLyrics.trim());
+            setSyncedLyrics([]); // make sure we don’t keep old sync
+            foundLyrics = true;
+          }
+
+          if (foundLyrics) {
+            setLyricsCacheKey(currentTrackKey);
+            setLyricsRetryCount(0);
+            return;
+          }
         }
       } catch {
-        //
+        // ignore and fall through to next provider
       }
 
-      /** ---------- lyrics.ovh ---------- **/
+      /** ---------- lyrics.ovh (plain) ---------- **/
       try {
         const r = await axios.get(
           `https://api.lyrics.ovh/v1/${artist}/${title}`
         );
+
         if (!cancelled && r.data?.lyrics) {
           setLyrics(r.data.lyrics.trim());
+          setSyncedLyrics([]); // plain text → no sync
+          foundLyrics = true;
+
           setLyricsCacheKey(currentTrackKey);
           setLyricsRetryCount(0);
           return;
         }
       } catch {
-        //
+        // ignore and fall through to MXM
       }
 
       /** ---------- MXM (your backend) ---------- **/
@@ -1829,33 +1849,56 @@ useEffect(() => {
         const r = await axios.get(`${MXM_API}/mxm-lyrics`, {
           params: { title, artist },
         });
+
         if (!cancelled && r.data?.lyrics) {
-          setLyrics(r.data.lyrics.trim());
+          const text = r.data.lyrics.trim();
+
+          // detect if LRC format → has timestamps like [01:23.45]
+          const looksLikeLrc =
+            /\[\d{1,2}:\d{1,2}(?:[.:]\d{1,3})?\]/.test(text);
+
+          if (looksLikeLrc) {
+            const parsed = parseLrc(text);
+            if (parsed && parsed.length) {
+              setSyncedLyrics(parsed); // 🔥 synced karaoke
+              foundLyrics = true;
+            } else {
+              // looks like LRC but failed to parse → fall back to plain
+              setLyrics(text);
+              setSyncedLyrics([]);
+              foundLyrics = true;
+            }
+          } else {
+            // no timestamps → plain lyrics only
+            setLyrics(text);
+            setSyncedLyrics([]); // ensure no stale sync
+            foundLyrics = true;
+          }
+
           setLyricsCacheKey(currentTrackKey);
           setLyricsRetryCount(0);
           return;
         }
       } catch {
-        //
+        // ignore
       }
 
-      /** ---------- Final: no lyrics ---------- **/
-      if (!cancelled) {
+      /** ---------- Final: no lyrics from any source ---------- **/
+      if (!cancelled && !foundLyrics) {
         setLyrics(null);
         setSyncedLyrics(null);
       }
     } finally {
-      if (!cancelled) setLyricsLoading(false);
+      if (!cancelled) {
+        setLyricsLoading(false);
 
-      /** ---------------- ⭐️ RETRY LOGIC HERE ⭐️ ---------------- **/
-      if (!cancelled && !lyrics && !syncedLyrics) {
-        if (lyricsRetryCount < MAX_LYRICS_RETRY) {
-          console.log("🔁 Retrying lyrics search in 4s...");
+        // ⭐ Retry only if nothing found and retries allowed
+        if (!foundLyrics && lyricsRetryCount < MAX_LYRICS_RETRY) {
           setTimeout(() => {
-            if (!cancelled) setLyricsRetryCount((n) => n + 1);
+            if (!cancelled) {
+              setLyricsRetryCount((n) => n + 1);
+            }
           }, 4000);
-        } else {
-          console.log("❌ No lyrics found after retries");
         }
       }
     }
@@ -1866,7 +1909,8 @@ useEffect(() => {
   return () => {
     cancelled = true;
   };
-}, [currentTrackKey, durationSec, lyricsRetryCount]);
+}, [currentTrackKey, durationSec, lyricsRetryCount, lyricsCacheKey, currentTrack]);
+
 
 
 
