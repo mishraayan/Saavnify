@@ -1299,15 +1299,9 @@ const joinRoom = async (roomIdToJoin) => {
       throw roomError || new Error("Room not found");
     }
 
-  setRoomId(roomIdToJoin);
-setInRoom(true);
-setRoomState(room); // basic state
-
-// Only sync audio if the room already has something playing
-if (room.current_track && room.is_playing) {
-  syncAudioWithRoom(room);
-}
-
+    setRoomId(roomIdToJoin);
+    setInRoom(true);
+    setRoomState(room);
   } catch (err) {
     console.error("joinRoom failed:", err);
     alert(
@@ -1351,7 +1345,7 @@ if (room.current_track && room.is_playing) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-const syncAudioWithRoom = useCallback(
+ const syncAudioWithRoom = useCallback(
   (room) => {
     setRoomState(room);
 
@@ -1361,35 +1355,14 @@ const syncAudioWithRoom = useCallback(
       audioRef.current = audio;
     }
 
-    if (!room) {
-      // no room row? reset
-      if (audio) {
-        audio.pause();
-        audio.currentTime = 0;
-      }
-      setCurrentTrack(null);
-      setIsPlaying(false);
-      setNeedsRoomTap(false);
-      return;
-    }
-
-    // 👇 is this client the host of the room?
-    const isHost = user?.id && room.host_id === user.id;
-
     if (room.current_track) {
       const track = room.current_track;
 
-      // Always show player in room mode
-      setShowPlayer(true);
-      setIsYouTube(false); // rooms = audio only
-
-      // If track changed → update state + src
       if (!currentTrack || currentTrack.id !== track.id) {
         setCurrentTrack(track);
         audio.src = track.url;
       }
 
-      // calc position from started_at
       let pos = 0;
       if (room.started_at) {
         const started = new Date(room.started_at).getTime();
@@ -1405,31 +1378,23 @@ const syncAudioWithRoom = useCallback(
         }
       }
 
-      if (!isHost) {
-        // ⭐ GUESTS FOLLOW THE ROOM
-        if (room.is_playing) {
-          audio
-            .play()
-            .then(() => {
-              setIsPlaying(true);
-              setNeedsRoomTap(false);
-            })
-            .catch((err) => {
-              console.warn("Autoplay blocked, need user tap", err);
-              setIsPlaying(false);
-              setNeedsRoomTap(true);
-              setShowPlayer(true); // make sure full player is visible
-            });
-        } else {
-          audio.pause();
-          setIsPlaying(false);
-        }
+      if (room.is_playing) {
+        audio
+          .play()
+          .then(() => {
+            setIsPlaying(true);
+            setNeedsRoomTap(false);
+          })
+          .catch((err) => {
+            console.warn("Autoplay blocked, need user tap", err);
+            setIsPlaying(false);
+            setNeedsRoomTap(true);
+          });
       } else {
-        // ⭐ HOST: only mirror state flag; actual play/pause is via handleRoomPlayPause
-        setIsPlaying(room.is_playing);
+        audio.pause();
+        setIsPlaying(false);
       }
     } else {
-      // no current_track → stop everywhere
       if (audio) {
         audio.pause();
         audio.currentTime = 0;
@@ -1439,13 +1404,8 @@ const syncAudioWithRoom = useCallback(
       setNeedsRoomTap(false);
     }
   },
-  [currentTrack, user?.id]
+  [currentTrack]
 );
-
-
-
-
-
 
   useEffect(() => {
     if (!isYouTube || !currentTrack || currentTrack.source !== "yt") return;
@@ -2176,55 +2136,6 @@ const playQueueTrackNow = async (track) => {
   }
 };
 
-// Host-only: start playback in this room for a given track
-const startRoomPlayback = async (track) => {
-  if (!roomId || !track) return;
-  if (!user?.id || roomState?.host_id !== user.id) return; // only host
-
-  // 🔹 Make sure UI knows what is playing
-  setCurrentTrack(track);
-  setShowPlayer(true);
-
-  let audio = audioRef.current;
-  if (!audio) {
-    audio = new Audio();
-    audioRef.current = audio;
-  }
-
-  audio.src = track.url;
-
-  try {
-    await audio.play();
-    setIsPlaying(true);
-  } catch (err) {
-    console.warn("Host: audio play blocked", err);
-    setIsPlaying(false);
-    setNeedsRoomTap(true);
-    return;
-  }
-
-  const now = Date.now();
-  const offsetMs = audio.currentTime * 1000;
-  const startedAt = new Date(now - offsetMs).toISOString();
-
-  const { error } = await supabase
-    .from("rooms")
-    .update({
-      current_track: track,
-      is_playing: true,
-      started_at: startedAt,
-      last_activity: startedAt,
-      current_dj: user.id,
-      current_dj_name: user.name || null,
-      current_dj_avatar: avatarUrl || null,
-    })
-    .eq("id", roomId);
-
-  if (error) {
-    console.error("startRoomPlayback failed:", error);
-  }
-};
-
 
   
 // ---------- PLAYER CONTROL ----------
@@ -2285,48 +2196,71 @@ if (track.source === "yt") {
     setIsYouTube(false);
     setShowCanvas(false);
 
-// 🚪 2) ROOM MODE — Shared listening (Saavn / audio only)
-if (inRoom && roomId) {
-  // 1️⃣ If there's NO current_track → first song of the room
-  if (!roomState?.current_track) {
-    if (!isRoomOwner) {
-      alert("Only the room owner can start playback in this room.");
-      return;
+    // 🚪 2) ROOM MODE (shared listening for audio tracks)
+    if (inRoom && roomId) {
+      // There is already a song playing in this room → treat as "add to queue"
+      if (roomState && roomState.current_track) {
+        // Only host or current DJ can modify queue
+        if (!isRoomOwner && !isCurrentDJ) {
+          alert("Only the room host or current DJ can add to queue right now 🎲");
+          return;
+        }
+
+        try {
+          const currentQueue = Array.isArray(roomState.queue)
+            ? roomState.queue
+            : [];
+
+          const { error } = await supabase
+            .from("rooms")
+            .update({
+              queue: [...currentQueue, track],
+              last_activity: new Date().toISOString(),
+            })
+            .eq("id", roomId);
+
+          if (error) throw error;
+        } catch (e) {
+          console.error("Add to queue failed", e);
+        }
+
+        return;
+      }
+
+      // No current_track yet → this is the *first* song of the room
+      // 👉 Only the HOST can start the very first song
+      if (!isRoomOwner) {
+        alert("Only the room owner can start playback in this room.");
+        return;
+      }
+
+      try {
+        const nowIso = new Date().toISOString();
+
+        const nextDj =
+          roomMembers && roomMembers.length > 0
+            ? roomMembers[Math.floor(Math.random() * roomMembers.length)]
+                .user_id
+            : user?.id;
+
+        const { error } = await supabase
+          .from("rooms")
+          .update({
+            current_track: track,
+            is_playing: true,
+            started_at: nowIso,
+            last_activity: nowIso,
+            current_dj: nextDj,
+          })
+          .eq("id", roomId);
+
+        if (error) throw error;
+      } catch (e) {
+        console.error("Room play failed", e);
+      }
+
+      return; // everyone will sync via realtime
     }
-
-    // Host starts playback locally + broadcasts to room
-    await startRoomPlayback(track);
-    return;
-  }
-
-  // 2️⃣ Room already has a current_track → add to shared queue
-  if (!isRoomOwner && !isCurrentDJ) {
-    alert("Only the room host or current DJ can add to queue right now 🎲");
-    return;
-  }
-
-  try {
-    const currentQueue = Array.isArray(roomState.queue)
-      ? [...roomState.queue]
-      : [];
-
-    const { error } = await supabase
-      .from("rooms")
-      .update({
-        queue: [...currentQueue, track],
-        last_activity: new Date().toISOString(),
-      })
-      .eq("id", roomId);
-
-    if (error) throw error;
-  } catch (e) {
-    console.error("Add to queue failed", e);
-  }
-
-  return;
-}
-
-
 
     // 🎧 3) NORMAL (non-room) behaviour — local audio playback
     let audio = audioRef.current;
@@ -2367,7 +2301,6 @@ if (inRoom && roomId) {
     roomMembers,
     tracks,
     user?.id,
-    startRoomPlayback,
   ]
 );
 
@@ -2403,59 +2336,53 @@ const playPrev = useCallback(() => {
 
 
 
-const handleRoomPlayPause = async () => {
-  if (!inRoom || !roomId || !roomState) return;
+  const handleRoomPlayPause = async () => {
+    if (!inRoom || !roomId || !roomState) return;
 
-  // Only the room owner can control playback
-  if (!isRoomOwner) {
-    alert("Only the room owner can control playback in this room.");
-    return;
-  }
-
-  const audio = audioRef.current;
-  if (!audio) return;
-
-  // 🔁 Decide next state from roomState, NOT from audio.paused
-  const wantsPlay = !roomState.is_playing;
-
-  // Compute started_at so everyone stays in sync when they resume
-  const now = Date.now();
-  const offsetMs =
-    !isNaN(audio.currentTime) && isFinite(audio.currentTime)
-      ? audio.currentTime * 1000
-      : 0;
-  const startedAt = new Date(now - offsetMs).toISOString();
-
-  try {
-    const patch = {
-      is_playing: wantsPlay,
-      started_at: startedAt,
-      last_activity: new Date().toISOString(),
-    };
-
-    // If we are switching to PLAY, also set current_dj
-    if (wantsPlay && user?.id) {
-      patch.current_dj = user.id;
-      patch.current_dj_name = user.name || null;
-      patch.current_dj_avatar = avatarUrl || null;
+    // Only the room owner can control playback
+    if (!isRoomOwner) {
+      alert("Only the room owner can control playback in this room.");
+      return;
     }
 
-    const { error } = await supabase
-      .from("rooms")
-      .update(patch)
-      .eq("id", roomId);
+    const audio = audioRef.current;
 
-    if (error) throw error;
+    try {
+      if (roomState.is_playing) {
+        // 🔇 PAUSE — store current position in started_at
+        let newStartedAt = roomState.started_at;
+        if (audio && !isNaN(audio.currentTime)) {
+          const now = Date.now();
+          const offsetMs = audio.currentTime * 1000;
+          newStartedAt = new Date(now - offsetMs).toISOString();
+        }
 
-    // ❌ No direct audio.play() / pause() here.
-    // Guests + host will react via syncAudioWithRoom(room).
-  } catch (e) {
-    console.error("Room play/pause failed", e);
-  }
-};
+        const { error } = await supabase
+          .from("rooms")
+          .update({
+            is_playing: false,
+            started_at: newStartedAt,
+            last_activity: new Date().toISOString(),
+          })
+          .eq("id", roomId);
 
+        if (error) throw error;
+      } else {
+        // ▶ RESUME — keep started_at so timeline continues
+        const { error } = await supabase
+          .from("rooms")
+          .update({
+            is_playing: true,
+            last_activity: new Date().toISOString(),
+          })
+          .eq("id", roomId);
 
-
+        if (error) throw error;
+      }
+    } catch (e) {
+      console.error("Room play/pause failed", e);
+    }
+  };
 
   const handlePlayPause = useCallback(() => {
   // 🎬 YouTube play/pause
