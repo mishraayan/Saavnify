@@ -1220,11 +1220,10 @@ const createRoom = async () => {
   if (!user) return;
 
   try {
-    const firstName =
-      (user.name || user.email || "User").split(" ")[0].trim();
+    const firstName = (user.name || user.email || "User").split(" ")[0].trim();
     const roomName = `${firstName}'s Room`;
 
-    // 1️⃣ Create room row
+    // Create room and get full object back
     const { data: room, error: roomError } = await supabase
       .from("rooms")
       .insert({
@@ -1234,29 +1233,38 @@ const createRoom = async () => {
         current_track: null,
         queue: [],
       })
-      .select("id") // we really only need id here
+      .select()           // ← FULL room object
       .single();
 
-    if (roomError) {
-      console.error("rooms insert error:", roomError);
-      alert("Could not create room. Check console / Supabase logs.");
+    if (roomError || !room) {
+      console.error("Room creation failed:", roomError);
+      alert("Failed to create room. Try again.");
       return;
     }
 
-    // 2️⃣ Put ?room= in URL (so refresh / shared link has same format)
-    const params = new URLSearchParams(window.location.search);
-    params.set("room", room.id);
-    const newUrl = window.location.pathname + "?" + params.toString();
+    // Update URL
+    const newUrl = `${window.location.pathname}?room=${room.id}`;
     window.history.replaceState({}, "", newUrl);
 
-    // 3️⃣ Reuse the SAME logic as friends joining
-    await joinRoom(room.id);
+    // INSTANTLY become the host — no race condition!
+    setRoomId(room.id);
+    setRoomState(room);
+    setInRoom(true);
+
+    // Add yourself as member (so room_members shows you)
+    await supabase.from("room_members").upsert({
+      room_id: room.id,
+      user_id: user.id,
+      user_name: user.name || user.email || "Guest",
+      user_avatar: avatarUrl || null,
+    });
+
+    showToast("Room Created", "You are the DJ — start playing!");
   } catch (err) {
     console.error("createRoom failed:", err);
     alert("Could not create room. Please try again.");
   }
 };
-
 
 
 
