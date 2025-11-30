@@ -1224,6 +1224,7 @@ const createRoom = async () => {
       (user.name || user.email || "User").split(" ")[0].trim();
     const roomName = `${firstName}'s Room`;
 
+    // 1️⃣ Create room row
     const { data: room, error: roomError } = await supabase
       .from("rooms")
       .insert({
@@ -1233,32 +1234,23 @@ const createRoom = async () => {
         current_track: null,
         queue: [],
       })
-      .select()
+      .select("id") // we really only need id here
       .single();
 
-    if (roomError) throw roomError;
+    if (roomError) {
+      console.error("rooms insert error:", roomError);
+      alert("Could not create room. Check console / Supabase logs.");
+      return;
+    }
 
-    // host auto-joins as member
-    const { error: memberError } = await supabase
-      .from("room_members")
-      .insert({
-        room_id: room.id,
-        user_id: user.id,
-        user_name: user.name || firstName || "Host",
-        user_avatar: avatarUrl || null,
-      });
-
-    if (memberError) throw memberError;
-
-    // put room id in URL
+    // 2️⃣ Put ?room= in URL (so refresh / shared link has same format)
     const params = new URLSearchParams(window.location.search);
     params.set("room", room.id);
     const newUrl = window.location.pathname + "?" + params.toString();
     window.history.replaceState({}, "", newUrl);
 
-    setRoomId(room.id);
-    setInRoom(true);
-    setRoomState(room);
+    // 3️⃣ Reuse the SAME logic as friends joining
+    await joinRoom(room.id);
   } catch (err) {
     console.error("createRoom failed:", err);
     alert("Could not create room. Please try again.");
@@ -1270,37 +1262,41 @@ const createRoom = async () => {
 
 // JOIN ROOM (friend + also host when opening via link)
 const joinRoom = async (roomIdToJoin) => {
-  if (!user) return;
+  if (!user) {
+    alert("You need to be logged in to join a room.");
+    return;
+  }
 
   try {
-    // 1️⃣ ensure membership row exists
+    const payload = {
+      room_id: roomIdToJoin,
+      user_id: user.id,
+      user_name: user.name || user.email || "Guest",
+      user_avatar: avatarUrl || null,
+    };
+
+    // 1️⃣ Try to insert membership row
     const { error: memberError } = await supabase
       .from("room_members")
-      .upsert(
-        {
-          room_id: roomIdToJoin,
-          user_id: user.id,
-          user_name: user.name || user.email || "Guest",
-          user_avatar: avatarUrl || null,
-        },
-        { onConflict: "room_id,user_id" }
-      );
+      .insert(payload);
 
-    if (memberError) {
-      console.error("room_members upsert error:", memberError);
+    // If there's any error other than "duplicate key", log it
+    // (code "23505" = unique violation, safe to ignore if you later add a unique constraint)
+    if (memberError && memberError.code !== "23505") {
+      console.error("room_members insert error:", memberError);
       throw memberError;
     }
 
-    // 2️⃣ fetch room row
+    // 2️⃣ Fetch room row
     const { data: room, error: roomError } = await supabase
       .from("rooms")
       .select("*")
       .eq("id", roomIdToJoin)
       .single();
 
-    if (roomError) {
-      console.error("rooms select error:", roomError);
-      throw roomError;
+    if (roomError || !room) {
+      console.error("rooms select error:", roomError || "Room not found");
+      throw roomError || new Error("Room not found");
     }
 
     setRoomId(roomIdToJoin);
@@ -1313,6 +1309,7 @@ const joinRoom = async (roomIdToJoin) => {
     );
   }
 };
+
 
 
   const leaveRoom = async () => {
