@@ -1011,48 +1011,33 @@ if (!user?.id || roomState.host_id !== user.id) {
       });
   }, [currentTrack, trackKey]);
 
-  // REAL-TIME SUBSCRIPTION — THE ONE THAT ACTUALLY WORKS ON PHONE
-  useEffect(() => {
-    // Clean up any previous subscription
-    if (window.currentRoomChannel) {
-      supabase.removeChannel(window.currentRoomChannel);
-      window.currentRoomChannel = null;
-    }
-
-    if (!roomId) return;
-
-    // CORRECT CHANNEL NAME — uses current roomId
-    const channel = supabase
-      .channel(`room:${roomId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'rooms',
-          filter: `id=eq.${roomId}`,
-        },
-        (payload) => {
-          console.log('Realtime →', payload.new);
-          setRoomState(payload.new);
-          // Optional: sync audio here too if you want
-        }
-      )
-      .subscribe((status) => {
-        console.log('Room channel status:', status);
-      });
-
-    // Store for cleanup
-    window.currentRoomChannel = channel;
-
-    // Cleanup when roomId changes or component unmounts
-    return () => {
-      if (window.currentRoomChannel) {
-        supabase.removeChannel(window.currentRoomChannel);
-        window.currentRoomChannel = null;
+  // Real-time listener
+useEffect(() => {
+  // Subscribe ONCE when component mounts — NEVER depend on roomId here
+  const channel = supabase
+    .channel(`room:${roomId || 'temp'}`)  // will be replaced anyway
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'rooms',
+        filter: `id=eq.${roomId}`,
+      },
+      (payload) => {
+        console.log('Realtime update →', payload);
+        setRoomState(payload.new);
       }
-    };
-  }, [roomId]); // ← THIS MUST DEPEND ON roomId !!!
+    )
+    .subscribe((status) => {
+      console.log('Subscription status:', status);
+    });
+
+  // Cleanup on unmount
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}, []); // ← EMPTY DEPENDENCY ARRAY = subscribe once at mount
 
   // Send comment
  const sendComment = async () => {
