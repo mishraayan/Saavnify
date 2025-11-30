@@ -1299,7 +1299,8 @@ const joinRoom = async (roomIdToJoin) => {
       throw roomError || new Error("Room not found");
     }
 
-    setRoomId(roomIdToJoin);
+    setRoom(room);           // ← this line is crucial
+  setRoomId(room.id);
     setInRoom(true);
     setRoomState(room);
   } catch (err) {
@@ -1694,57 +1695,70 @@ useEffect(() => {
 
 
 
- useEffect(() => {
-  if (!roomId) return;
+// Your room state (you already have this somewhere)
+const [room, setRoom] = useState(null); // ← this is the full room object { id, name, host_id, ... }
 
-  const roomChannel = supabase
-    .channel(`room:${roomId}`)
+// REAL-TIME SUBSCRIPTION – THIS IS THE ONLY BLOCK YOU NEED TO REPLACE
+useEffect(() => {
+  // Cleanup old channels first
+  if (window.roomChannel) {
+    supabase.removeChannel(window.roomChannel);
+    window.roomChannel = null;
+  }
+  if (window.membersChannel) {
+    supabase.removeChannel(window.membersChannel);
+    window.membersChannel = null;
+  }
+
+  // Need the full room object (with .id)
+  if (!room?.id) return;
+
+  // Room changes (current_track, is_playing, etc.)
+  window.roomChannel = supabase
+    .channel(`room:${room.id}`)
     .on(
       "postgres_changes",
       {
         event: "UPDATE",
         schema: "public",
         table: "rooms",
-        filter: `id=eq.${roomId}`,
+        filter: `id=eq.${room.id}`,
       },
       (payload) => {
-        const room = payload.new;
-        syncAudioWithRoom(room);
+        setRoom(payload.new);               // important: update local room
+        setRoomState(payload.new);
+        syncAudioWithRoom(payload.new);
       }
     )
     .subscribe();
 
-  const membersChannel = supabase
-    .channel(`room-members:${roomId}`)
+  // Members presence / join-leave
+  window.membersChannel = supabase
+    .channel(`room-members:${room.id}`)
     .on(
       "postgres_changes",
       {
         event: "*",
         schema: "public",
         table: "room_members",
-        filter: `room_id=eq.${roomId}`,
+        filter: `room_id=eq.${room.id}`,
       },
-      async () => {
-        const { data } = await supabase
+      () => {
+        // refetch members
+        supabase
           .from("room_members")
-          .select("*")
-          .eq("room_id", roomId);
-        setRoomMembers(data || []);
+          .select("user_id, profile:profiles(name, avatar_url)")
+          .eq("room_id", room.id)
+          .then(({ data }) => setRoomMembers(data || []));
       }
     )
     .subscribe();
 
-  supabase
-    .from("room_members")
-    .select("*")
-    .eq("room_id", roomId)
-    .then(({ data }) => setRoomMembers(data || []));
-
   return () => {
-    supabase.removeChannel(roomChannel);
-    supabase.removeChannel(membersChannel);
+    if (window.roomChannel) supabase.removeChannel(window.roomChannel);
+    if (window.membersChannel) supabase.removeChannel(window.membersChannel);
   };
-}, [roomId, syncAudioWithRoom]);
+}, [room?.id]); // ← ONLY THIS LINE MATTERS
 
 const currentTrackKey = currentTrack ? trackKey(currentTrack) : null;
 const durationSec =
