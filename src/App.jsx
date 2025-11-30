@@ -2196,92 +2196,71 @@ if (track.source === "yt") {
     setIsYouTube(false);
     setShowCanvas(false);
 
-   // 🚪 2) ROOM MODE — Shared listening (Saavn / audio only)
-if (inRoom && roomId) {
-  // 1️⃣ If there's NO current_track → first song of the room
-  if (!roomState?.current_track) {
-    if (!isRoomOwner) {
-      alert("Only the room owner can start playback in this room.");
-      return;
+    // 🚪 2) ROOM MODE (shared listening for audio tracks)
+    if (inRoom && roomId) {
+      // There is already a song playing in this room → treat as "add to queue"
+      if (roomState && roomState.current_track) {
+        // Only host or current DJ can modify queue
+        if (!isRoomOwner && !isCurrentDJ) {
+          alert("Only the room host or current DJ can add to queue right now 🎲");
+          return;
+        }
+
+        try {
+          const currentQueue = Array.isArray(roomState.queue)
+            ? roomState.queue
+            : [];
+
+          const { error } = await supabase
+            .from("rooms")
+            .update({
+              queue: [...currentQueue, track],
+              last_activity: new Date().toISOString(),
+            })
+            .eq("id", roomId);
+
+          if (error) throw error;
+        } catch (e) {
+          console.error("Add to queue failed", e);
+        }
+
+        return;
+      }
+
+      // No current_track yet → this is the *first* song of the room
+      // 👉 Only the HOST can start the very first song
+      if (!isRoomOwner) {
+        alert("Only the room owner can start playback in this room.");
+        return;
+      }
+
+      try {
+        const nowIso = new Date().toISOString();
+
+        const nextDj =
+          roomMembers && roomMembers.length > 0
+            ? roomMembers[Math.floor(Math.random() * roomMembers.length)]
+                .user_id
+            : user?.id;
+
+        const { error } = await supabase
+          .from("rooms")
+          .update({
+            current_track: track,
+            is_playing: true,
+            started_at: nowIso,
+            last_activity: nowIso,
+            current_dj: nextDj,
+          })
+          .eq("id", roomId);
+
+        if (error) throw error;
+      } catch (e) {
+        console.error("Room play failed", e);
+      }
+
+      return; // everyone will sync via realtime
     }
-
-    // 🔊 Host: play locally from this click (allowed by browser)
-    let audio = audioRef.current;
-    if (!audio) {
-      audio = new Audio();
-      audioRef.current = audio;
-    }
-
-    setCurrentTrack(track);
-    setShowPlayer(true);
-    setIsYouTube(false);
-    audio.src = track.url;
-
-    try {
-      await audio.play();
-      setIsPlaying(true);
-      setNeedsRoomTap(false);
-    } catch (err) {
-      console.warn("Host play blocked", err);
-      setIsPlaying(false);
-      setNeedsRoomTap(true);
-      // still continue to update room so guests can hear if allowed
-    }
-
-    // 📡 Sync to room so everyone else follows
-    const now = Date.now();
-    const offsetMs = (audio.currentTime || 0) * 1000;
-    const startedAt = new Date(now - offsetMs).toISOString();
-
-    try {
-      const { error } = await supabase
-        .from("rooms")
-        .update({
-          current_track: track,
-          is_playing: true,
-          started_at: startedAt,
-          last_activity: startedAt,
-          current_dj: user.id,
-          current_dj_name: user.name || null,
-          current_dj_avatar: avatarUrl || null,
-        })
-        .eq("id", roomId);
-
-      if (error) throw error;
-    } catch (e) {
-      console.error("Failed to start room playback:", e);
-    }
-
-    return; // ✅ done, realtime will update guests
-  }
-
-  // 2️⃣ Room already has a current_track → add to shared queue
-  if (!isRoomOwner && !isCurrentDJ) {
-    alert("Only the room host or current DJ can add to queue right now 🎲");
-    return;
-  }
-
-  try {
-    const currentQueue = Array.isArray(roomState.queue)
-      ? [...roomState.queue]
-      : [];
-
-    const { error } = await supabase
-      .from("rooms")
-      .update({
-        queue: [...currentQueue, track],
-        last_activity: new Date().toISOString(),
-      })
-      .eq("id", roomId);
-
-    if (error) throw error;
-  } catch (e) {
-    console.error("Add to queue failed", e);
-  }
-
-  return;
-}
-
 
     // 🎧 3) NORMAL (non-room) behaviour — local audio playback
     let audio = audioRef.current;
