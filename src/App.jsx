@@ -1011,25 +1011,48 @@ if (!user?.id || roomState.host_id !== user.id) {
       });
   }, [currentTrack, trackKey]);
 
-  // Real-time listener
+  // REAL-TIME SUBSCRIPTION — THE ONE THAT ACTUALLY WORKS ON PHONE
   useEffect(() => {
+    // Clean up any previous subscription
+    if (window.currentRoomChannel) {
+      supabase.removeChannel(window.currentRoomChannel);
+      window.currentRoomChannel = null;
+    }
+
+    if (!roomId) return;
+
+    // CORRECT CHANNEL NAME — uses current roomId
     const channel = supabase
-      .channel("comments-channel")
+      .channel(`room:${roomId}`)
       .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "comments" },
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'rooms',
+          filter: `id=eq.${roomId}`,
+        },
         (payload) => {
-          const newMsg = payload.new;
-          setComments((prev) => ({
-            ...prev,
-            [newMsg.track_key]: [newMsg, ...(prev[newMsg.track_key] || [])],
-          }));
+          console.log('Realtime →', payload.new);
+          setRoomState(payload.new);
+          // Optional: sync audio here too if you want
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log('Room channel status:', status);
+      });
 
-    return () => supabase.removeChannel(channel);
-  }, []);
+    // Store for cleanup
+    window.currentRoomChannel = channel;
+
+    // Cleanup when roomId changes or component unmounts
+    return () => {
+      if (window.currentRoomChannel) {
+        supabase.removeChannel(window.currentRoomChannel);
+        window.currentRoomChannel = null;
+      }
+    };
+  }, [roomId]); // ← THIS MUST DEPEND ON roomId !!!
 
   // Send comment
  const sendComment = async () => {
@@ -1217,14 +1240,13 @@ if (!user?.id || roomState.host_id !== user.id) {
 
 // CREATE ROOM (host)
 const createRoom = async () => {
-  if (!user) return;
+  if (!user || inRoom) return;
 
   try {
-    const firstName = (user.name || user.email || "User").split(" ")[0].trim();
+    const firstName = (user.name || user.email || "User").split(" ")[0];
     const roomName = `${firstName}'s Room`;
 
-    // Create room and get full object back
-    const { data: room, error: roomError } = await supabase
+    const { data: room, error } = await supabase
       .from("rooms")
       .insert({
         name: roomName,
@@ -1233,36 +1255,32 @@ const createRoom = async () => {
         current_track: null,
         queue: [],
       })
-      .select()           // ← FULL room object
+      .select()
       .single();
 
-    if (roomError || !room) {
-      console.error("Room creation failed:", roomError);
-      alert("Failed to create room. Try again.");
-      return;
-    }
+    if (error || !room) throw error;
 
-    // Update URL
+    // UPDATE URL
     const newUrl = `${window.location.pathname}?room=${room.id}`;
-    window.history.replaceState({}, "", newUrl);
+    window.history.replaceState(null, "", newUrl);
 
-    // INSTANTLY become the host — no race condition!
+    // FORCE STATE IMMEDIATELY — this triggers everything
     setRoomId(room.id);
-    setRoomState(room);
+    setRoomState(room);        // ← this now lands because subscription is ALREADY active
     setInRoom(true);
 
-    // Add yourself as member (so room_members shows you)
+    // Add yourself to members
     await supabase.from("room_members").upsert({
       room_id: room.id,
       user_id: user.id,
       user_name: user.name || user.email || "Guest",
-      user_avatar: avatarUrl || null,
+      user_avatar: avatarUrl,
     });
 
-    showToast("Room Created", "You are the DJ — start playing!");
+    showToast("Room created — you're the DJ!");
   } catch (err) {
-    console.error("createRoom failed:", err);
-    alert("Could not create room. Please try again.");
+    console.error(err);
+    alert("Failed to create room");
   }
 };
 
