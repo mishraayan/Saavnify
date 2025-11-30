@@ -3753,7 +3753,7 @@ useEffect(() => {
                 </button>
               )}
 
-              <div className="relative w-full flex items-center justify-center h-[260px] md:h-[340px] lg:h-[400px] overflow-hidden">
+              <div className="relative w-full flex items-center justify-center h-[220px] sm:h-[260px] md:h-[340px] lg:h-[400px] overflow-hidden">
                 {/* Canvas host is ALWAYS here; visibility controlled by showCanvas */}
                 <div
                   className={`absolute inset-0 -z-10 transition-opacity duration-500 ${
@@ -3771,7 +3771,7 @@ useEffect(() => {
                   <img
                     src={currentTrack.image_url}
                     alt={currentTrack.title}
-                    className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
+                    className={`w-48 h-48 sm:w-56 sm:h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
                       isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
                     }`}
                     style={{
