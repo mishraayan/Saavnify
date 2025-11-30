@@ -13,7 +13,7 @@ import {
   X,
   Shuffle,
   Repeat,
-  Search,
+  Search as SearchIcon,
   Home as HomeIcon,
   Library as LibraryIcon,
   User2,
@@ -90,11 +90,15 @@ function adaptSongs(data) {
 
 // ---------- LANDING SCREEN ----------
 function LandingScreen({ onGetStarted }) {
-  // simple mobile check
-  const isMobile =
-    typeof window !== "undefined"
-      ? window.matchMedia("(max-width: 768px)").matches
-      : false;
+const [isMobile, setIsMobile] = useState(
+  typeof window !== "undefined" ? window.innerWidth <= 768 : false
+);
+
+useEffect(() => {
+  const handleResize = () => setIsMobile(window.innerWidth <= 768);
+  window.addEventListener("resize", handleResize);
+  return () => window.removeEventListener("resize", handleResize);
+}, []);
 
   return (
     <div className="min-h-screen relative overflow-hidden bg-gradient-to-br from-indigo-900 via-black to-purple-900 flex items-center justify-center">
@@ -144,108 +148,101 @@ function AuthScreen({ mode, setMode, onAuthComplete }) {
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
 
- const handleSubmit = async (e) => {
-  e.preventDefault();
-  setError("");
-  setInfo("");
-  setLoading(true);
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setInfo("");
+    setLoading(true);
 
-  try {
-    if (!email || !password) {
-      throw new Error("Email and password are required");
-    }
-
-    if (mode === "signup") {
-      // SIGN UP WITH SUPABASE
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: { name: name || "Music Lover" }, // stored in user_metadata
-        },
-      });
-
-      if (error) throw error;
-
-      // If email confirmation is ON in Supabase, session may be null
-      if (!data.session) {
-        setInfo("Check your email to confirm your account, then log in.");
-        return;
+    try {
+      if (!email || !password) {
+        throw new Error("Email and password are required");
       }
 
-      const supaUser = data.session.user;
+      if (mode === "signup") {
+        // SIGN UP WITH SUPABASE
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: { name: name || "Music Lover" }, // stored in user_metadata
+          },
+        });
 
-      // 1️⃣ Create / update profile row
-      const displayName =
-        supaUser.user_metadata?.name || name || "Music Lover";
+        if (error) throw error;
 
-      await supabase.from("profiles").upsert({
-        id: supaUser.id,
-        name: displayName,
-      });
+        // If email confirmation is ON in Supabase, session may be null
+        if (!data.session) {
+          setInfo("Check your email to confirm your account, then log in.");
+          return;
+        }
 
-      // 2️⃣ Build appUser object with avatar null (no avatar yet)
-      const appUser = {
-        id: supaUser.id,
-        name: displayName,
-        email: supaUser.email,
-        avatar: null,
-      };
+        const supaUser = data.session.user;
 
-      localStorage.setItem(
-        "saavnify_user_profile",
-        JSON.stringify(appUser)
-      );
+        // 1️⃣ Create / update profile row
+        const displayName =
+          supaUser.user_metadata?.name || name || "Music Lover";
 
-      onAuthComplete(appUser);
-    } else {
-      // LOGIN WITH SUPABASE
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+        await supabase.from("profiles").upsert({
+          id: supaUser.id,
+          name: displayName,
+        });
 
-      if (error) throw error;
+        // 2️⃣ Build appUser object with avatar null (no avatar yet)
+        const appUser = {
+          id: supaUser.id,
+          name: displayName,
+          email: supaUser.email,
+          avatar: null,
+        };
 
-      const supaUser = data.user;
+        localStorage.setItem("saavnify_user_profile", JSON.stringify(appUser));
 
-      // 1️⃣ Fetch profile row for latest name + avatar
-      const { data: profileData } = await supabase
-        .from("profiles")
-        .select("name, avatar_url")
-        .eq("id", supaUser.id)
-        .single();
+        onAuthComplete(appUser);
+      } else {
+        // LOGIN WITH SUPABASE
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
 
-      const displayName =
-        profileData?.name ||
-        supaUser.user_metadata?.name ||
-        name ||
-        "Music Lover";
+        if (error) throw error;
 
-      const avatarUrl = profileData?.avatar_url || null;
+        const supaUser = data.user;
 
-      const appUser = {
-        id: supaUser.id,
-        name: displayName,
-        email: supaUser.email,
-        avatar: avatarUrl,
-      };
+        // 1️⃣ Fetch profile row for latest name + avatar
+        const { data: profileData } = await supabase
+          .from("profiles")
+          .select("name, avatar_url")
+          .eq("id", supaUser.id)
+          .single();
 
-      localStorage.setItem(
-        "saavnify_user_profile",
-        JSON.stringify(appUser)
-      );
+        const displayName =
+          profileData?.name ||
+          supaUser.user_metadata?.name ||
+          name ||
+          "Music Lover";
 
-      onAuthComplete(appUser);
+        const avatarUrl = profileData?.avatar_url || null;
+
+        const appUser = {
+          id: supaUser.id,
+          name: displayName,
+          email: supaUser.email,
+          avatar: avatarUrl,
+        };
+
+        localStorage.setItem("saavnify_user_profile", JSON.stringify(appUser));
+
+        onAuthComplete(appUser);
+      }
+    } catch (err) {
+      console.error("Auth error:", err);
+      setError(err.message || "Authentication failed");
+    } finally {
+      setLoading(false);
     }
-  } catch (err) {
-    console.error("Auth error:", err);
-    setError(err.message || "Authentication failed");
-  } finally {
-    setLoading(false);
-  }
-};
-
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-black to-slate-900 px-4">
@@ -334,91 +331,153 @@ function SearchScreen({
   tracks,
   openPlayer,
   loading,
+  suggestions = [],
+  showSuggestions = false,
+  onSearchChange,   // from parent (MusicApp)
+  onSuggestionClick,
+  onManualSearch,   // from parent (MusicApp)
 }) {
+  // fallback: if parent didn't pass custom handler, just use local one
+  const handleChange = (e) => {
+    if (onSearchChange) {
+      onSearchChange(e);
+    } else {
+      setSearchQuery(e.target.value);
+    }
+  };
+
+  const handleEnter = (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+
+    if (onManualSearch) {
+      onManualSearch(); // use parent logic
+    } else {
+      searchSongs(); // fallback
+    }
+  };
+
+  const handleSuggestionPress = (track) => {
+    if (onSuggestionClick) {
+      onSuggestionClick(track);
+    } else {
+      // fallback: just put title+artist into box and search
+      const q = `${track.title || ""} ${track.singers || ""}`.trim();
+      setSearchQuery(q);
+      searchSongs(q);
+    }
+  };
+
   return (
-    <div className="px-4 md:px-8 pt-4 md:pt-6 text-white">
-      {/* Header */}
-      <h2 className="text-2xl md:text-3xl font-bold mb-6">Search</h2>
+    <div className="px-4 pb-24 mt-2">
+      {/* Search bar section (mobile + desktop) */}
+      <div className="max-w-xl mx-auto mb-4">
+        <div className="relative">
+          {/* input + icon button side by side */}
+          <div className="flex items-center gap-2">
+            <input
+              id="search-input"
+              type="text"
+              value={searchQuery}
+              onChange={handleChange}
+              onKeyDown={handleEnter}
+              placeholder="Search songs, artists..."
+              className="w-full flex-1 px-4 py-2 rounded-full bg-white/10 border border-white/20 text-white
+                focus:outline-none focus:border-cyan-500 transition text-sm"
+              onFocus={() => {
+                // let MusicApp decide showSuggestions; no-op here
+              }}
+              onBlur={() => {
+                // blur handling kept in parent if needed
+              }}
+            />
 
-      {/* Input */}
-      <div className="flex gap-4 mb-6">
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && searchSongs()}
-          className="flex-1 px-6 py-3 md:py-4 rounded-full bg-white/10 border border-white/20
-               focus:outline-none focus:border-cyan-400 text-white"
-          placeholder="What do you want to listen to?"
-        />
+            <button
+              type="button"
+              onClick={() =>
+                onManualSearch ? onManualSearch() : searchSongs()
+              }
+              className="flex items-center justify-center w-10 h-10 rounded-full bg-cyan-500/90 hover:bg-cyan-500
+                         text-white shadow-lg flex-shrink-0 active:scale-95 transition"
+            >
+              <SearchIcon size={18} />
+            </button>
+          </div>
 
-        <button
-          onClick={() => searchSongs()}
-          className="px-6 py-3 md:px-8 bg-gradient-to-r from-green-500 to-cyan-500
-              rounded-full font-semibold hover:scale-105 flex items-center gap-2"
-        >
-          <Search size={20} />
-          <span className="hidden sm:block">Search</span>
-        </button>
+          {/* Suggestions dropdown */}
+          {onSearchChange && showSuggestions && suggestions.length > 0 && (
+            <div className="absolute left-0 right-0 mt-1 bg-zinc-900/95 border border-white/10 rounded-2xl shadow-2xl z-40 max-h-80 overflow-y-auto">
+              {suggestions.map((t) => (
+                <button
+                  key={t.id + t.title}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()} // avoid blur before click
+                  onClick={() => handleSuggestionPress(t)}
+                  className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/10 text-left"
+                >
+                  <img
+                    src={t.image_url}
+                    alt={t.title}
+                    className="w-9 h-9 rounded-xl object-cover"
+                  />
+                  <div className="flex-1">
+                    <p className="text-xs font-semibold truncate">{t.title}</p>
+                    <p className="text-[11px] text-gray-400 truncate">
+                      {t.singers}
+                    </p>
+                  </div>
+                  <span className="text-[10px] uppercase text-gray-500">
+                    {t.source === "yt" ? "YouTube" : "Saavn"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Spotify-style categories */}
-      <h3 className="text-lg font-semibold mb-3">Trending</h3>
-      <div className="flex gap-2 mb-6 flex-wrap">
-        {[
-          "Arijit Singh",
-          "Bollywood Hits",
-          "LoFi",
-          "KK",
-          "Sidhu Moose Wala",
-          "EDM",
-          "Workout",
-          "Sad",
-        ].map((tag) => (
-          <button
-            key={tag}
-            onClick={() => {
-              setSearchQuery(tag);
-              searchSongs();
-            }}
-            className="px-4 py-2 rounded-full bg-white/10 border border-white/15 hover:bg-white/20"
-          >
-            {tag}
-          </button>
-        ))}
-      </div>
-      {/* 🔥 LOADING INDICATOR GOES HERE */}
-      {loading && (
-        <div className="flex items-center justify-center mt-2 mb-4">
-          <div className="w-8 h-8 border-4 border-cyan-400 border-t-transparent rounded-full animate-spin mr-3" />
-          <p className="text-sm text-gray-200">Finding fresh tracks for you…</p>
+      {/* Results */}
+      {loading ? (
+        <div className="flex items-center justify-center mt-10">
+          <div className="w-8 h-8 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : tracks.length === 0 ? (
+        <p className="text-center text-gray-300 text-sm mt-6">
+          No results yet. Try searching for your favourite song or artist.
+        </p>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 max-w-5xl mx-auto">
+          {tracks.map((track) => (
+            <div
+              key={track.id + track.title}
+              onClick={() => openPlayer(track, tracks)}
+              className="cursor-pointer group relative rounded-2xl overflow-hidden shadow-xl bg-black/40 border border-white/10 hover:-translate-y-1 hover:scale-[1.02] transition"
+            >
+              <div className="relative w-full aspect-square overflow-hidden">
+                <img
+                  src={track.image_url}
+                  alt={track.title}
+                  className="w-full h-full object-cover group-hover:scale-110 transition duration-300"
+                />
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
+                  <Play size={32} className="text-white drop-shadow-lg" />
+                </div>
+              </div>
+              <p className="mt-2 font-semibold text-center truncate px-2 text-xs sm:text-sm">
+                {track.title}
+              </p>
+              <p className="text-[11px] sm:text-xs text-gray-400 text-center truncate px-2 mb-3">
+                {track.singers}
+              </p>
+            </div>
+          ))}
         </div>
       )}
-      {/* Results grid */}
-      <h3 className="text-lg font-semibold mb-3">Results</h3>
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-5 pb-24">
-      {tracks.map((track) => (
-  <div
-    key={track.id}
-    onClick={() => openPlayer(track, tracks)}
-    className="cursor-pointer bg-white/10 rounded-2xl overflow-hidden hover:bg-white/20 transition"
-  >
-
-            <img
-              src={track.image_url}
-              alt={track.title}
-              className="aspect-square object-cover"
-            />
-            <p className="px-3 pt-2 font-semibold truncate">{track.title}</p>
-            <p className="px-3 pb-3 text-xs text-gray-300 truncate">
-              {track.singers}
-            </p>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
+
+
 function ProfileScreen({
   user,
   profileName,
@@ -428,6 +487,13 @@ function ProfileScreen({
   profileSaving,
   onAvatarUpload,
   onSaveProfile,
+  inRoom,
+  isRoomOwner,
+  onCreateRoom,
+  onShareRoom,
+  onLeaveRoom,
+  onEndRoom,
+  onLogout,
 }) {
   const [isEditing, setIsEditing] = useState(false);
 
@@ -520,7 +586,6 @@ function ProfileScreen({
             (avatar saves automatically)
           </p>
         </div>
-
         {/* Info / form section */}
         <div className="flex-1 space-y-4">
           {!isEditing ? (
@@ -601,12 +666,80 @@ function ProfileScreen({
           )}
         </div>
       </div>
+       {/* 👇 Mobile-only room + logout controls */}
+    <div className="mt-6 md:hidden space-y-3">
+      {!inRoom ? (
+        <>
+          {/* Create Room when NOT in a room */}
+          {onCreateRoom && (
+            <button
+              type="button"
+              onClick={onCreateRoom}
+              className="w-full px-4 py-2 rounded-full bg-emerald-500/80 hover:bg-emerald-500 text-sm font-semibold"
+            >
+              Create Room
+            </button>
+          )}
+
+          {/* Logout */}
+          {onLogout && (
+            <button
+              type="button"
+              onClick={onLogout}
+              className="w-full px-4 py-2 rounded-full bg-red-500/80 hover:bg-red-500 text-sm font-semibold"
+            >
+              Logout
+            </button>
+          )}
+        </>
+      ) : (
+        <>
+          {/* Already IN a room → show room controls */}
+          {onShareRoom && (
+            <button
+              type="button"
+              onClick={onShareRoom}
+              className="w-full px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-sm font-semibold"
+            >
+              Share Room
+            </button>
+          )}
+
+          {onLeaveRoom && (
+            <button
+              type="button"
+              onClick={onLeaveRoom}
+              className="w-full px-4 py-2 rounded-full bg-orange-500/80 hover:bg-orange-500 text-sm font-semibold"
+            >
+              Leave Room
+            </button>
+          )}
+
+          {isRoomOwner && onEndRoom && (
+            <button
+              type="button"
+              onClick={onEndRoom}
+              className="w-full px-4 py-2 rounded-full bg-red-500/80 hover:bg-red-500 text-sm font-semibold"
+            >
+              End Room
+            </button>
+          )}
+
+          {onLogout && (
+            <button
+              type="button"
+              onClick={onLogout}
+              className="w-full px-4 py-2 rounded-full bg-red-500/80 hover:bg-red-500 text-sm font-semibold"
+            >
+              Logout
+            </button>
+          )}
+        </>
+      )}
+    </div>
     </div>
   );
 }
-
-
-
 
 function NewPlaylistForm({ onCreate }) {
   const [name, setName] = useState("");
@@ -666,26 +799,38 @@ function MusicApp({ user, onLogout }) {
   const [isYouTube, setIsYouTube] = useState(false);
   const [ytLastTime, setYtLastTime] = useState(0);
   const ytProgressTimerRef = useRef(null);
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const suggestionTimerRef = useRef(null);
+  const skipNextSuggestionRef = useRef(false);
+  const lastSuggestionQueryRef = useRef("");
 
   const ytPlayerRef = useRef(null);
   const [showCanvas, setShowCanvas] = useState(false);
   const ytCanvasRef = useRef(null);
-    const [avatarUrl, setAvatarUrl] = useState(user?.avatar || null);
+  const [avatarUrl, setAvatarUrl] = useState(user?.avatar || null);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [profileName, setProfileName] = useState(user?.name || "Music Lover");
   const [profileSaving, setProfileSaving] = useState(false);
+  const [isMobile, setIsMobile] = useState(
+  typeof window !== "undefined" ? window.innerWidth <= 768 : false
+);
+
+useEffect(() => {
+  const handleResize = () => {
+    setIsMobile(window.innerWidth <= 768);
+  };
+  window.addEventListener("resize", handleResize);
+  return () => window.removeEventListener("resize", handleResize);
+}, []);
+
 
   useEffect(() => {
     setAvatarUrl(user?.avatar || null);
     setProfileName(user?.name || "Music Lover");
   }, [user?.avatar, user?.name]);
 
-
   const audioRef = useRef(null);
-  const isMobile =
-    typeof window !== "undefined"
-      ? window.matchMedia("(max-width: 768px)").matches
-      : false;
 
   const trackKey = useCallback(
     (track) =>
@@ -726,11 +871,10 @@ function MusicApp({ user, onLogout }) {
   const handleDeleteRoom = async () => {
     if (!roomId || !roomState) return;
 
-if (!user?.id || roomState.host_id !== user.id) {
-  alert("Only the room owner can end the room.");
-  return;
-}
-
+    if (!user?.id || roomState.host_id !== user.id) {
+      alert("Only the room owner can end the room.");
+      return;
+    }
 
     if (!window.confirm("End this room for everyone?")) return;
 
@@ -794,28 +938,28 @@ if (!user?.id || roomState.host_id !== user.id) {
     });
   };
   const performLogout = async () => {
-  // stop audio
-  const audio = audioRef.current;
-  if (audio) {
-    audio.pause();
-    audio.currentTime = 0;
-  }
-  setIsPlaying(false);
+    // stop audio
+    const audio = audioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+    setIsPlaying(false);
 
-  // sign out from Supabase
-  try {
-    await supabase.auth.signOut();
-  } catch (err) {
-    console.warn("Supabase signOut failed", err);
-  }
+    // sign out from Supabase
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.warn("Supabase signOut failed", err);
+    }
 
-  // clear local profile cache
-  localStorage.removeItem("saavnify_user_profile");
+    // clear local profile cache
+    localStorage.removeItem("saavnify_user_profile");
 
-  // your old logout flow
-  onLogout();
-};
-    const handleAvatarUpload = async (event) => {
+    // your old logout flow
+    onLogout();
+  };
+  const handleAvatarUpload = async (event) => {
     try {
       const file = event.target.files?.[0];
       if (!file) return;
@@ -890,7 +1034,6 @@ if (!user?.id || roomState.host_id !== user.id) {
         console.warn("Failed to update cached avatar", err);
       }
 
-
       showToast?.("Profile", "Avatar updated successfully ✨");
     } finally {
       setAvatarUploading(false);
@@ -910,13 +1053,11 @@ if (!user?.id || roomState.host_id !== user.id) {
 
     setProfileSaving(true);
     try {
-      const { error } = await supabase
-        .from("profiles")
-        .upsert({
-          id: user.id,
-          name: trimmed,
-          avatar_url: avatarUrl || null,
-        });
+      const { error } = await supabase.from("profiles").upsert({
+        id: user.id,
+        name: trimmed,
+        avatar_url: avatarUrl || null,
+      });
 
       if (error) {
         console.error("Profile update error:", error);
@@ -948,8 +1089,6 @@ if (!user?.id || roomState.host_id !== user.id) {
       setProfileSaving(false);
     }
   };
-
-
 
   // Restore playback state on load
   // restore playback
@@ -1012,61 +1151,77 @@ if (!user?.id || roomState.host_id !== user.id) {
   }, [currentTrack, trackKey]);
 
   // Real-time listener
-useEffect(() => {
-  // Subscribe ONCE when component mounts — NEVER depend on roomId here
-  const channel = supabase
-    .channel(`room:${roomId || 'temp'}`)  // will be replaced anyway
-    .on(
-      'postgres_changes',
-      {
-        event: '*',
-        schema: 'public',
-        table: 'rooms',
-        filter: `id=eq.${roomId}`,
-      },
-      (payload) => {
-        console.log('Realtime update →', payload);
-        setRoomState(payload.new);
-      }
-    )
-    .subscribe((status) => {
-      console.log('Subscription status:', status);
-    });
+  useEffect(() => {
+    // Subscribe ONCE when component mounts — NEVER depend on roomId here
+    const channel = supabase
+      .channel(`room:${roomId || "temp"}`) // will be replaced anyway
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "rooms",
+          filter: `id=eq.${roomId}`,
+        },
+        (payload) => {
+          console.log("Realtime update →", payload);
+          setRoomState(payload.new);
+        }
+      )
+      .subscribe((status) => {
+        console.log("Subscription status:", status);
+      });
 
-  // Cleanup on unmount
-  return () => {
-    supabase.removeChannel(channel);
-  };
-}, []); // ← EMPTY DEPENDENCY ARRAY = subscribe once at mount
+    // Cleanup on unmount
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []); // ← EMPTY DEPENDENCY ARRAY = subscribe once at mount
 
   // Send comment
- const sendComment = async () => {
-  const text = newComment.trim();
-  if (!text || !currentTrack) return;
+  const sendComment = async () => {
+    const text = newComment.trim();
+    if (!text || !currentTrack) return;
 
-  const payload = {
-    track_key: trackKey(currentTrack),
-    text,
-    name: user?.name || "Guest",
+    const key = trackKey(currentTrack);
+
+    const payload = {
+      track_key: key,
+      text,
+      name: user?.name || "Guest",
+    };
+
+    if (user?.id) {
+      payload.user_id = user.id;
+    }
+    if (avatarUrl) {
+      payload.avatar_url = avatarUrl;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from("comments")
+        .insert(payload)
+        .select("*") // 👈 so we get back full row (id, created_at, etc.)
+        .single();
+
+      if (error) {
+        console.error("Comment failed:", error);
+        return;
+      }
+
+      // ✅ Clear input
+      setNewComment("");
+
+      // ✅ Optimistic UI update – show immediately
+      setComments((prev) => ({
+        ...prev,
+        [key]: [...(prev[key] || []), data],
+      }));
+    } catch (err) {
+      console.error("sendComment error:", err);
+    }
   };
-
-  // If your comments table has these columns (we created them in SQL):
-  if (user?.id) {
-    payload.user_id = user.id;
-  }
-  if (avatarUrl) {
-    payload.avatar_url = avatarUrl;
-  }
-
-  const { error } = await supabase.from("comments").insert(payload);
-
-  if (error) {
-    console.error("Comment failed:", error);
-  } else {
-    setNewComment("");
-  }
-};
-
 
   const [offline, setOffline] = useState(
     typeof navigator !== "undefined" ? !navigator.onLine : false
@@ -1220,120 +1375,112 @@ useEffect(() => {
     };
   }, []);
 
+  // CREATE ROOM (host)
+  const createRoom = async () => {
+    if (!user || inRoom) return;
 
- 
+    try {
+      const firstName = (user.name || user.email || "User").split(" ")[0];
+      const roomName = `${firstName}'s Room`;
 
-// CREATE ROOM (host)
-const createRoom = async () => {
-  if (!user || inRoom) return;
+      const { data: room, error } = await supabase
+        .from("rooms")
+        .insert({
+          name: roomName,
+          host_id: user.id,
+          is_playing: false,
+          current_track: null,
+          queue: [],
+        })
+        .select()
+        .single();
 
-  try {
-    const firstName = (user.name || user.email || "User").split(" ")[0];
-    const roomName = `${firstName}'s Room`;
+      if (error || !room) throw error;
 
-    const { data: room, error } = await supabase
-      .from("rooms")
-      .insert({
-        name: roomName,
-        host_id: user.id,
-        is_playing: false,
-        current_track: null,
-        queue: [],
-      })
-      .select()
-      .single();
+      // UPDATE URL
+      const newUrl = `${window.location.pathname}?room=${room.id}`;
+      window.history.replaceState(null, "", newUrl);
 
-    if (error || !room) throw error;
+      // FORCE STATE IMMEDIATELY — this triggers everything
+      setRoomId(room.id);
+      setRoomState(room); // ← this now lands because subscription is ALREADY active
+      setInRoom(true);
 
-    // UPDATE URL
-    const newUrl = `${window.location.pathname}?room=${room.id}`;
-    window.history.replaceState(null, "", newUrl);
+      // Add yourself to members
+      await supabase.from("room_members").upsert({
+        room_id: room.id,
+        user_id: user.id,
+        user_name: user.name || user.email || "Guest",
+        user_avatar: avatarUrl,
+      });
 
-    // FORCE STATE IMMEDIATELY — this triggers everything
-    setRoomId(room.id);
-    setRoomState(room);        // ← this now lands because subscription is ALREADY active
-    setInRoom(true);
+      showToast("Room created — you're the DJ!");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to create room");
+    }
+  };
 
-    // Add yourself to members
-    await supabase.from("room_members").upsert({
-      room_id: room.id,
-      user_id: user.id,
-      user_name: user.name || user.email || "Guest",
-      user_avatar: avatarUrl,
-    });
-
-    showToast("Room created — you're the DJ!");
-  } catch (err) {
-    console.error(err);
-    alert("Failed to create room");
-  }
-};
-
-
-
-// JOIN ROOM (friend + also host when opening via link)
-const joinRoom = async (roomIdToJoin) => {
-  if (!user) {
-    alert("You need to be logged in to join a room.");
-    return;
-  }
-
-  try {
-    const payload = {
-      room_id: roomIdToJoin,
-      user_id: user.id,
-      user_name: user.name || user.email || "Guest",
-      user_avatar: avatarUrl || null,
-    };
-
-    // 1️⃣ Try to insert membership row
-    const { error: memberError } = await supabase
-      .from("room_members")
-      .insert(payload);
-
-    // If there's any error other than "duplicate key", log it
-    // (code "23505" = unique violation, safe to ignore if you later add a unique constraint)
-    if (memberError && memberError.code !== "23505") {
-      console.error("room_members insert error:", memberError);
-      throw memberError;
+  // JOIN ROOM (friend + also host when opening via link)
+  const joinRoom = async (roomIdToJoin) => {
+    if (!user) {
+      alert("You need to be logged in to join a room.");
+      return;
     }
 
-    // 2️⃣ Fetch room row
-    const { data: room, error: roomError } = await supabase
-      .from("rooms")
-      .select("*")
-      .eq("id", roomIdToJoin)
-      .single();
+    try {
+      const payload = {
+        room_id: roomIdToJoin,
+        user_id: user.id,
+        user_name: user.name || user.email || "Guest",
+        user_avatar: avatarUrl || null,
+      };
 
-    if (roomError || !room) {
-      console.error("rooms select error:", roomError || "Room not found");
-      throw roomError || new Error("Room not found");
+      // 1️⃣ Try to insert membership row
+      const { error: memberError } = await supabase
+        .from("room_members")
+        .insert(payload);
+
+      // If there's any error other than "duplicate key", log it
+      // (code "23505" = unique violation, safe to ignore if you later add a unique constraint)
+      if (memberError && memberError.code !== "23505") {
+        console.error("room_members insert error:", memberError);
+        throw memberError;
+      }
+
+      // 2️⃣ Fetch room row
+      const { data: room, error: roomError } = await supabase
+        .from("rooms")
+        .select("*")
+        .eq("id", roomIdToJoin)
+        .single();
+
+      if (roomError || !room) {
+        console.error("rooms select error:", roomError || "Room not found");
+        throw roomError || new Error("Room not found");
+      }
+
+      setRoomId(roomIdToJoin);
+      setInRoom(true);
+      setRoomState(room);
+    } catch (err) {
+      console.error("joinRoom failed:", err);
+      alert(
+        "Could not join this room. Maybe it was closed or you have no access."
+      );
     }
-
-    setRoomId(roomIdToJoin);
-    setInRoom(true);
-    setRoomState(room);
-  } catch (err) {
-    console.error("joinRoom failed:", err);
-    alert(
-      "Could not join this room. Maybe it was closed or you have no access."
-    );
-  }
-};
-
-
+  };
 
   const leaveRoom = async () => {
     if (!roomId) return;
-    
-  if (user?.id) {
-  await supabase
-    .from("room_members")
-    .delete()
-    .eq("room_id", roomId)
-    .eq("user_id", user.id);
-}
 
+    if (user?.id) {
+      await supabase
+        .from("room_members")
+        .delete()
+        .eq("room_id", roomId)
+        .eq("user_id", user.id);
+    }
 
     setInRoom(false);
     setRoomId(null);
@@ -1347,81 +1494,81 @@ const joinRoom = async (roomIdToJoin) => {
       (params.toString() ? "?" + params.toString() : "");
     window.history.replaceState({}, "", newUrl);
   };
- // Call this whenever you want to auto-join from URL
-const checkUrlAndJoinRoom = useCallback(() => {
-  if (typeof window === "undefined") return;
-  const params = new URLSearchParams(window.location.search);
-  const roomIdFromUrl = params.get("room");
-  if (roomIdFromUrl && !inRoom) {
-    joinRoom(roomIdFromUrl);
-  }
-}, [inRoom]);
-
-// Run on mount AND when inRoom changes
-useEffect(() => {
-  checkUrlAndJoinRoom();
-}, [checkUrlAndJoinRoom]);
- const syncAudioWithRoom = useCallback(
-  (room) => {
-    setRoomState(room);
-
-    let audio = audioRef.current;
-    if (!audio) {
-      audio = new Audio();
-      audioRef.current = audio;
+  // Call this whenever you want to auto-join from URL
+  const checkUrlAndJoinRoom = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const roomIdFromUrl = params.get("room");
+    if (roomIdFromUrl && !inRoom) {
+      joinRoom(roomIdFromUrl);
     }
+  }, [inRoom]);
 
-    if (room.current_track) {
-      const track = room.current_track;
+  // Run on mount AND when inRoom changes
+  useEffect(() => {
+    checkUrlAndJoinRoom();
+  }, [checkUrlAndJoinRoom]);
+  const syncAudioWithRoom = useCallback(
+    (room) => {
+      setRoomState(room);
 
-      if (!currentTrack || currentTrack.id !== track.id) {
-        setCurrentTrack(track);
-        audio.src = track.url;
+      let audio = audioRef.current;
+      if (!audio) {
+        audio = new Audio();
+        audioRef.current = audio;
       }
 
-      let pos = 0;
-      if (room.started_at) {
-        const started = new Date(room.started_at).getTime();
-        const now = Date.now();
-        pos = Math.max((now - started) / 1000, 0);
-      }
+      if (room.current_track) {
+        const track = room.current_track;
 
-      if (!isNaN(pos)) {
-        try {
-          audio.currentTime = pos;
-        } catch (e) {
-          console.warn("Failed to set currentTime", e);
+        if (!currentTrack || currentTrack.id !== track.id) {
+          setCurrentTrack(track);
+          audio.src = track.url;
         }
-      }
 
-      if (room.is_playing) {
-        audio
-          .play()
-          .then(() => {
-            setIsPlaying(true);
-            setNeedsRoomTap(false);
-          })
-          .catch((err) => {
-            console.warn("Autoplay blocked, need user tap", err);
-            setIsPlaying(false);
-            setNeedsRoomTap(true);
-          });
+        let pos = 0;
+        if (room.started_at) {
+          const started = new Date(room.started_at).getTime();
+          const now = Date.now();
+          pos = Math.max((now - started) / 1000, 0);
+        }
+
+        if (!isNaN(pos)) {
+          try {
+            audio.currentTime = pos;
+          } catch (e) {
+            console.warn("Failed to set currentTime", e);
+          }
+        }
+
+        if (room.is_playing) {
+          audio
+            .play()
+            .then(() => {
+              setIsPlaying(true);
+              setNeedsRoomTap(false);
+            })
+            .catch((err) => {
+              console.warn("Autoplay blocked, need user tap", err);
+              setIsPlaying(false);
+              setNeedsRoomTap(true);
+            });
+        } else {
+          audio.pause();
+          setIsPlaying(false);
+        }
       } else {
-        audio.pause();
+        if (audio) {
+          audio.pause();
+          audio.currentTime = 0;
+        }
+        setCurrentTrack(null);
         setIsPlaying(false);
+        setNeedsRoomTap(false);
       }
-    } else {
-      if (audio) {
-        audio.pause();
-        audio.currentTime = 0;
-      }
-      setCurrentTrack(null);
-      setIsPlaying(false);
-      setNeedsRoomTap(false);
-    }
-  },
-  [currentTrack]
-);
+    },
+    [currentTrack]
+  );
 
   useEffect(() => {
     if (!isYouTube || !currentTrack || currentTrack.source !== "yt") return;
@@ -1462,78 +1609,78 @@ useEffect(() => {
       }, 500);
     }
 
-   function createPlayer() {
-  if (cancelled) return;
+    function createPlayer() {
+      if (cancelled) return;
 
-  playerInstance = new window.YT.Player("yt-player", {
-    videoId: currentTrack.id,
-    playerVars: {
-      autoplay: 1,
-      controls: 0,
-      rel: 0,
-      modestbranding: 1,
-    },
-    events: {
-      onReady: (e) => {
-        if (cancelled) return;
-        ytPlayerRef.current = e.target;
+      playerInstance = new window.YT.Player("yt-player", {
+        videoId: currentTrack.id,
+        playerVars: {
+          autoplay: 1,
+          controls: 0,
+          rel: 0,
+          modestbranding: 1,
+        },
+        events: {
+          onReady: (e) => {
+            if (cancelled) return;
+            ytPlayerRef.current = e.target;
 
-        if (ytLastTime > 0) {
-          try {
-            e.target.seekTo(ytLastTime, true);
-          } catch (err) {
-            console.warn("Failed to seek YT on resume", err);
-          }
-        }
-
-        e.target.playVideo();
-        setIsPlaying(true);
-        startProgressTimer(e.target);
-      },
-      onStateChange: (e) => {
-        if (cancelled) return;
-
-        const state = e.data;
-
-        if (state === window.YT.PlayerState.PLAYING) {
-          setIsPlaying(true);
-
-          // 🔄 keep canvas in sync → play
-          if (ytCanvasRef.current) {
-            try {
-              ytCanvasRef.current.playVideo();
-            } catch (ERR) {
-              console.warn(ERR);
+            if (ytLastTime > 0) {
+              try {
+                e.target.seekTo(ytLastTime, true);
+              } catch (err) {
+                console.warn("Failed to seek YT on resume", err);
+              }
             }
-          }
-        } else if (
-          state === window.YT.PlayerState.PAUSED ||
-          state === window.YT.PlayerState.ENDED
-        ) {
-          setIsPlaying(false);
 
-          // 🔄 keep canvas in sync → pause
-          if (ytCanvasRef.current) {
-            try {
-              ytCanvasRef.current.pauseVideo();
-            } catch (ERR) {
-              console.warn(ERR);
-            }
-          }
-        }
-
-        if (state === window.YT.PlayerState.ENDED) {
-          if (repeat) {
-            e.target.seekTo(0, true);
             e.target.playVideo();
-          } else {
-            playNext();
-          }
-        }
-      },
-    },
-  });
-}
+            setIsPlaying(true);
+            startProgressTimer(e.target);
+          },
+          onStateChange: (e) => {
+            if (cancelled) return;
+
+            const state = e.data;
+
+            if (state === window.YT.PlayerState.PLAYING) {
+              setIsPlaying(true);
+
+              // 🔄 keep canvas in sync → play
+              if (ytCanvasRef.current) {
+                try {
+                  ytCanvasRef.current.playVideo();
+                } catch (ERR) {
+                  console.warn(ERR);
+                }
+              }
+            } else if (
+              state === window.YT.PlayerState.PAUSED ||
+              state === window.YT.PlayerState.ENDED
+            ) {
+              setIsPlaying(false);
+
+              // 🔄 keep canvas in sync → pause
+              if (ytCanvasRef.current) {
+                try {
+                  ytCanvasRef.current.pauseVideo();
+                } catch (ERR) {
+                  console.warn(ERR);
+                }
+              }
+            }
+
+            if (state === window.YT.PlayerState.ENDED) {
+              if (repeat) {
+                e.target.seekTo(0, true);
+                e.target.playVideo();
+              } else {
+                playNext();
+              }
+            }
+          },
+        },
+      });
+    }
 
     function onYouTubeIframeAPIReady() {
       if (cancelled) return;
@@ -1565,355 +1712,353 @@ useEffect(() => {
       ytPlayerRef.current = null;
     };
   }, [isYouTube, currentTrack, repeat, ytLastTime]);
-   
 
-// 🎥 Canvas background video for YT – loop middle 6 seconds, muted
-useEffect(() => {
-  // Only when:
-  // - current track is YT
-  // - full player is open
-  // - canvas mode is ON
-  if (
-    !isYouTube ||
-    !showCanvas ||
-    !showPlayer ||
-    !currentTrack ||
-    currentTrack.source !== "yt"
-  ) {
-    // Clean up if we leave this state
-    if (ytCanvasRef.current) {
-      try {
-        ytCanvasRef.current.stopVideo?.();
-        ytCanvasRef.current.destroy?.();
-      } catch (error) {
-        console.warn("Failed to destroy YT canvas player", error);
-      }
-      ytCanvasRef.current = null;
-    }
-    return;
-  }
-
-  if (typeof window === "undefined") return;
-
-  let cancelled = false;
-  let loopTimer = null;
-  let waitTimer = null;
-
-  function setupLoop(player) {
-    const trySetup = () => {
-      if (cancelled) return;
-
-      const duration = player.getDuration();
-      if (!duration || duration <= 0) {
-        setTimeout(trySetup, 500);
-        return;
-      }
-
-      const mid = duration * 0.4;
-      const loopStart = Math.max(mid - 3, 0);
-      const loopEnd = Math.min(loopStart + 6, duration);
-
-      player.mute();
-      player.seekTo(loopStart, true);
-      player.playVideo();
-
-      loopTimer = setInterval(() => {
-        if (cancelled) return;
-        const t = player.getCurrentTime();
-        if (t >= loopEnd) {
-          player.seekTo(loopStart, true);
+  // 🎥 Canvas background video for YT – loop middle 6 seconds, muted
+  useEffect(() => {
+    // Only when:
+    // - current track is YT
+    // - full player is open
+    // - canvas mode is ON
+    if (
+      !isYouTube ||
+      !showCanvas ||
+      !showPlayer ||
+      !currentTrack ||
+      currentTrack.source !== "yt"
+    ) {
+      // Clean up if we leave this state
+      if (ytCanvasRef.current) {
+        try {
+          ytCanvasRef.current.stopVideo?.();
+          ytCanvasRef.current.destroy?.();
+        } catch (error) {
+          console.warn("Failed to destroy YT canvas player", error);
         }
-      }, 300);
-    };
-
-    trySetup();
-  }
-
-  function createCanvasPlayer() {
-    if (cancelled) return;
-
-    // Make sure our div is actually in the DOM
-    const host = document.getElementById("yt-canvas-player");
-    if (!host) {
-      console.warn("yt-canvas-player element not found");
+        ytCanvasRef.current = null;
+      }
       return;
     }
 
-    ytCanvasRef.current = new window.YT.Player("yt-canvas-player", {
-      videoId: currentTrack.id,
-      playerVars: {
-        autoplay: 1,
-        controls: 0,
-        mute: 1,
-        loop: 0,
-        rel: 0,
-        modestbranding: 1,
-        playsinline: 1,
-      },
-      events: {
-        onReady: (e) => {
-          if (cancelled) return;
-          setupLoop(e.target);
-        },
-        onStateChange: (e) => {
-          if (cancelled) return;
-          if (e.data === window.YT.PlayerState.ENDED) {
-            setupLoop(e.target);
-          }
-        },
-      },
-    });
-  }
+    if (typeof window === "undefined") return;
 
-  function ensureApiAndCreate() {
-    if (window.YT && window.YT.Player) {
-      createCanvasPlayer();
-    } else {
-      waitTimer = setInterval(() => {
-        if (window.YT && window.YT.Player) {
-          clearInterval(waitTimer);
-          createCanvasPlayer();
+    let cancelled = false;
+    let loopTimer = null;
+    let waitTimer = null;
+
+    function setupLoop(player) {
+      const trySetup = () => {
+        if (cancelled) return;
+
+        const duration = player.getDuration();
+        if (!duration || duration <= 0) {
+          setTimeout(trySetup, 500);
+          return;
         }
-      }, 300);
-    }
-  }
 
-  ensureApiAndCreate();
+        const mid = duration * 0.4;
+        const loopStart = Math.max(mid - 3, 0);
+        const loopEnd = Math.min(loopStart + 6, duration);
 
-  return () => {
-    cancelled = true;
-    if (waitTimer) {
-      clearInterval(waitTimer);
-      waitTimer = null;
+        player.mute();
+        player.seekTo(loopStart, true);
+        player.playVideo();
+
+        loopTimer = setInterval(() => {
+          if (cancelled) return;
+          const t = player.getCurrentTime();
+          if (t >= loopEnd) {
+            player.seekTo(loopStart, true);
+          }
+        }, 300);
+      };
+
+      trySetup();
     }
-    if (loopTimer) {
-      clearInterval(loopTimer);
-      loopTimer = null;
-    }
-    if (ytCanvasRef.current) {
-      try {
-        ytCanvasRef.current.stopVideo?.();
-        ytCanvasRef.current.destroy?.();
-      } catch (error) {
-        console.warn("Failed to clean YT canvas player", error);
+
+    function createCanvasPlayer() {
+      if (cancelled) return;
+
+      // Make sure our div is actually in the DOM
+      const host = document.getElementById("yt-canvas-player");
+      if (!host) {
+        console.warn("yt-canvas-player element not found");
+        return;
       }
-      ytCanvasRef.current = null;
+
+      ytCanvasRef.current = new window.YT.Player("yt-canvas-player", {
+        videoId: currentTrack.id,
+        playerVars: {
+          autoplay: 1,
+          controls: 0,
+          mute: 1,
+          loop: 0,
+          rel: 0,
+          modestbranding: 1,
+          playsinline: 1,
+        },
+        events: {
+          onReady: (e) => {
+            if (cancelled) return;
+            setupLoop(e.target);
+          },
+          onStateChange: (e) => {
+            if (cancelled) return;
+            if (e.data === window.YT.PlayerState.ENDED) {
+              setupLoop(e.target);
+            }
+          },
+        },
+      });
     }
-  };
-}, [isYouTube, showCanvas, showPlayer, currentTrack]);
 
-
-
-
- useEffect(() => {
-  if (!roomId) return;
-
-  const roomChannel = supabase
-    .channel(`room:${roomId}`)
-    .on(
-      "postgres_changes",
-      {
-        event: "UPDATE",
-        schema: "public",
-        table: "rooms",
-        filter: `id=eq.${roomId}`,
-      },
-      (payload) => {
-        const room = payload.new;
-        syncAudioWithRoom(room);
+    function ensureApiAndCreate() {
+      if (window.YT && window.YT.Player) {
+        createCanvasPlayer();
+      } else {
+        waitTimer = setInterval(() => {
+          if (window.YT && window.YT.Player) {
+            clearInterval(waitTimer);
+            createCanvasPlayer();
+          }
+        }, 300);
       }
-    )
-    .subscribe();
+    }
 
-  const membersChannel = supabase
-    .channel(`room-members:${roomId}`)
-    .on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "room_members",
-        filter: `room_id=eq.${roomId}`,
-      },
-      async () => {
-        const { data } = await supabase
-          .from("room_members")
-          .select("*")
-          .eq("room_id", roomId);
-        setRoomMembers(data || []);
+    ensureApiAndCreate();
+
+    return () => {
+      cancelled = true;
+      if (waitTimer) {
+        clearInterval(waitTimer);
+        waitTimer = null;
       }
-    )
-    .subscribe();
+      if (loopTimer) {
+        clearInterval(loopTimer);
+        loopTimer = null;
+      }
+      if (ytCanvasRef.current) {
+        try {
+          ytCanvasRef.current.stopVideo?.();
+          ytCanvasRef.current.destroy?.();
+        } catch (error) {
+          console.warn("Failed to clean YT canvas player", error);
+        }
+        ytCanvasRef.current = null;
+      }
+    };
+  }, [isYouTube, showCanvas, showPlayer, currentTrack]);
 
-  supabase
-    .from("room_members")
-    .select("*")
-    .eq("room_id", roomId)
-    .then(({ data }) => setRoomMembers(data || []));
+  useEffect(() => {
+    if (!roomId) return;
 
-  return () => {
-    supabase.removeChannel(roomChannel);
-    supabase.removeChannel(membersChannel);
-  };
-}, [roomId, syncAudioWithRoom]);
+    const roomChannel = supabase
+      .channel(`room:${roomId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "rooms",
+          filter: `id=eq.${roomId}`,
+        },
+        (payload) => {
+          const room = payload.new;
+          syncAudioWithRoom(room);
+        }
+      )
+      .subscribe();
 
-const currentTrackKey = currentTrack ? trackKey(currentTrack) : null;
-const durationSec =
-  currentTrack?.duration ? Math.floor(currentTrack.duration / 1000) : undefined;
+    const membersChannel = supabase
+      .channel(`room-members:${roomId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "room_members",
+          filter: `room_id=eq.${roomId}`,
+        },
+        async () => {
+          const { data } = await supabase
+            .from("room_members")
+            .select("*")
+            .eq("room_id", roomId);
+          setRoomMembers(data || []);
+        }
+      )
+      .subscribe();
 
-// Remember last song we successfully fetched
-const [lyricsCacheKey, setLyricsCacheKey] = useState(null);
-const [lyricsRetryCount, setLyricsRetryCount] = useState(0);
-const MAX_LYRICS_RETRY = 0; // 👈 try total = 3 times
+    supabase
+      .from("room_members")
+      .select("*")
+      .eq("room_id", roomId)
+      .then(({ data }) => setRoomMembers(data || []));
 
+    return () => {
+      supabase.removeChannel(roomChannel);
+      supabase.removeChannel(membersChannel);
+    };
+  }, [roomId, syncAudioWithRoom]);
 
+  const currentTrackKey = currentTrack ? trackKey(currentTrack) : null;
+  const durationSec = currentTrack?.duration
+    ? Math.floor(currentTrack.duration / 1000)
+    : undefined;
 
-useEffect(() => {
-  if (!currentTrackKey) {
+  // Remember last song we successfully fetched
+  const [lyricsCacheKey, setLyricsCacheKey] = useState(null);
+  const [lyricsRetryCount, setLyricsRetryCount] = useState(0);
+  const MAX_LYRICS_RETRY = 0; // 👈 try total = 3 times
+
+  useEffect(() => {
+    if (!currentTrackKey) {
+      setLyrics(null);
+      setSyncedLyrics(null);
+      setLyricsLoading(false);
+      setLyricsRetryCount(0);
+      return;
+    }
+
+    // Already fetched for this track — don’t retry
+    if (lyricsCacheKey === currentTrackKey) return;
+
     setLyrics(null);
     setSyncedLyrics(null);
-    setLyricsLoading(false);
-    setLyricsRetryCount(0);
-    return;
-  }
+    setLyricsLoading(true);
 
-  // Already fetched for this track — don’t retry
-  if (lyricsCacheKey === currentTrackKey) return;
+    let cancelled = false;
 
-  setLyrics(null);
-  setSyncedLyrics(null);
-  setLyricsLoading(true);
+    const fetchLyrics = async () => {
+      let foundLyrics = false; // ✅ local flag, not React state
 
-  let cancelled = false;
-
-  const fetchLyrics = async () => {
-    let foundLyrics = false; // ✅ local flag, not React state
-
-    try {
-      const title = currentTrack.title?.trim() || "";
-      const artist = currentTrack.singers?.trim() || "";
-
-      /** ---------- LRCLIB (synced) ---------- **/
       try {
-        const params = { track_name: title, artist_name: artist };
-        if (durationSec) params.duration = durationSec;
+        const title = currentTrack.title?.trim() || "";
+        const artist = currentTrack.singers?.trim() || "";
 
-        const r = await axios.get("https://lrclib.net/api/get", { params });
+        /** ---------- LRCLIB (synced) ---------- **/
+        try {
+          const params = { track_name: title, artist_name: artist };
+          if (durationSec) params.duration = durationSec;
 
-        if (!cancelled && r.data?.id) {
-          if (r.data.syncedLyrics) {
-            const parsed = parseLrc(r.data.syncedLyrics);
-            if (parsed && parsed.length) {
-              setSyncedLyrics(parsed);
+          const r = await axios.get("https://lrclib.net/api/get", { params });
+
+          if (!cancelled && r.data?.id) {
+            if (r.data.syncedLyrics) {
+              const parsed = parseLrc(r.data.syncedLyrics);
+              if (parsed && parsed.length) {
+                setSyncedLyrics(parsed);
+                foundLyrics = true;
+              }
+            }
+
+            if (!foundLyrics && r.data.plainLyrics) {
+              setLyrics(r.data.plainLyrics.trim());
+              setSyncedLyrics([]); // make sure we don’t keep old sync
               foundLyrics = true;
             }
-          }
 
-          if (!foundLyrics && r.data.plainLyrics) {
-            setLyrics(r.data.plainLyrics.trim());
-            setSyncedLyrics([]); // make sure we don’t keep old sync
+            if (foundLyrics) {
+              setLyricsCacheKey(currentTrackKey);
+              setLyricsRetryCount(0);
+              return;
+            }
+          }
+        } catch {
+          // ignore and fall through to next provider
+        }
+
+        /** ---------- lyrics.ovh (plain) ---------- **/
+        try {
+          const r = await axios.get(
+            `https://api.lyrics.ovh/v1/${artist}/${title}`
+          );
+
+          if (!cancelled && r.data?.lyrics) {
+            setLyrics(r.data.lyrics.trim());
+            setSyncedLyrics([]); // plain text → no sync
             foundLyrics = true;
-          }
 
-          if (foundLyrics) {
             setLyricsCacheKey(currentTrackKey);
             setLyricsRetryCount(0);
             return;
           }
+        } catch {
+          // ignore and fall through to MXM
         }
-      } catch {
-        // ignore and fall through to next provider
-      }
 
-      /** ---------- lyrics.ovh (plain) ---------- **/
-      try {
-        const r = await axios.get(
-          `https://api.lyrics.ovh/v1/${artist}/${title}`
-        );
+        /** ---------- MXM (your backend) ---------- **/
+        try {
+          const r = await axios.get(`${MXM_API}/mxm-lyrics`, {
+            params: { title, artist },
+          });
 
-        if (!cancelled && r.data?.lyrics) {
-          setLyrics(r.data.lyrics.trim());
-          setSyncedLyrics([]); // plain text → no sync
-          foundLyrics = true;
+          if (!cancelled && r.data?.lyrics) {
+            const text = r.data.lyrics.trim();
 
-          setLyricsCacheKey(currentTrackKey);
-          setLyricsRetryCount(0);
-          return;
-        }
-      } catch {
-        // ignore and fall through to MXM
-      }
+            // detect if LRC format → has timestamps like [01:23.45]
+            const looksLikeLrc = /\[\d{1,2}:\d{1,2}(?:[.:]\d{1,3})?\]/.test(
+              text
+            );
 
-      /** ---------- MXM (your backend) ---------- **/
-      try {
-        const r = await axios.get(`${MXM_API}/mxm-lyrics`, {
-          params: { title, artist },
-        });
-
-        if (!cancelled && r.data?.lyrics) {
-          const text = r.data.lyrics.trim();
-
-          // detect if LRC format → has timestamps like [01:23.45]
-          const looksLikeLrc =
-            /\[\d{1,2}:\d{1,2}(?:[.:]\d{1,3})?\]/.test(text);
-
-          if (looksLikeLrc) {
-            const parsed = parseLrc(text);
-            if (parsed && parsed.length) {
-              setSyncedLyrics(parsed); // 🔥 synced karaoke
-              foundLyrics = true;
+            if (looksLikeLrc) {
+              const parsed = parseLrc(text);
+              if (parsed && parsed.length) {
+                setSyncedLyrics(parsed); // 🔥 synced karaoke
+                foundLyrics = true;
+              } else {
+                // looks like LRC but failed to parse → fall back to plain
+                setLyrics(text);
+                setSyncedLyrics([]);
+                foundLyrics = true;
+              }
             } else {
-              // looks like LRC but failed to parse → fall back to plain
+              // no timestamps → plain lyrics only
               setLyrics(text);
-              setSyncedLyrics([]);
+              setSyncedLyrics([]); // ensure no stale sync
               foundLyrics = true;
             }
-          } else {
-            // no timestamps → plain lyrics only
-            setLyrics(text);
-            setSyncedLyrics([]); // ensure no stale sync
-            foundLyrics = true;
+
+            setLyricsCacheKey(currentTrackKey);
+            setLyricsRetryCount(0);
+            return;
           }
-
-          setLyricsCacheKey(currentTrackKey);
-          setLyricsRetryCount(0);
-          return;
+        } catch {
+          // ignore
         }
-      } catch {
-        // ignore
-      }
 
-      /** ---------- Final: no lyrics from any source ---------- **/
-      if (!cancelled && !foundLyrics) {
-        setLyrics(null);
-        setSyncedLyrics(null);
-      }
-    } finally {
-      if (!cancelled) {
-        setLyricsLoading(false);
+        /** ---------- Final: no lyrics from any source ---------- **/
+        if (!cancelled && !foundLyrics) {
+          setLyrics(null);
+          setSyncedLyrics(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLyricsLoading(false);
 
-        // ⭐ Retry only if nothing found and retries allowed
-        if (!foundLyrics && lyricsRetryCount < MAX_LYRICS_RETRY) {
-          setTimeout(() => {
-            if (!cancelled) {
-              setLyricsRetryCount((n) => n + 1);
-            }
-          }, 4000);
+          // ⭐ Retry only if nothing found and retries allowed
+          if (!foundLyrics && lyricsRetryCount < MAX_LYRICS_RETRY) {
+            setTimeout(() => {
+              if (!cancelled) {
+                setLyricsRetryCount((n) => n + 1);
+              }
+            }, 4000);
+          }
         }
       }
-    }
-  };
+    };
 
-  fetchLyrics();
+    fetchLyrics();
 
-  return () => {
-    cancelled = true;
-  };
-}, [currentTrackKey, durationSec, lyricsRetryCount, lyricsCacheKey, currentTrack]);
-
-
-
-
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    currentTrackKey,
+    durationSec,
+    lyricsRetryCount,
+    lyricsCacheKey,
+    currentTrack,
+  ]);
 
   // ----- LIBRARY LOAD/SAVE -----
   useEffect(() => {
@@ -2005,6 +2150,8 @@ useEffect(() => {
     const raw = typeof qOverride === "string" ? qOverride : searchQuery || "";
     const q = raw.trim();
     if (!q) return;
+
+    setShowSuggestions(false);
 
     setLoading(true);
 
@@ -2098,6 +2245,152 @@ useEffect(() => {
     }
   };
 
+  // 🔍 fetch lightweight suggestions (like Spotify style)
+  const fetchSuggestions = async (q) => {
+    const term = q.trim();
+    if (!term) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    try {
+      const [saavnRes, ytRes] = await Promise.allSettled([
+        axios.get(`${API}/result/?query=${encodeURIComponent(term)}`),
+        axios.get(`${YT_API}/search?q=${encodeURIComponent(term)}`),
+      ]);
+
+      let results = [];
+
+      if (saavnRes.status === "fulfilled") {
+        const saavnTracks = adaptSongs(saavnRes.value.data).map((t) => ({
+          ...t,
+          source: "saavn",
+        }));
+        results = results.concat(saavnTracks);
+      }
+
+      if (ytRes.status === "fulfilled") {
+        const ytRaw = ytRes.value.data || [];
+        const ytTracks = ytRaw.map((t) => {
+          const videoId = t.id || t.videoId || t.video_id;
+          const image_url = videoId
+            ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+            : "https://via.placeholder.com/500?text=YouTube+Track";
+
+          return {
+            id: videoId || t.id || Math.random().toString(),
+            title: t.title || t.name || "Unknown title",
+            singers:
+              t.channelTitle || t.channel || t.artist || t.singers || "YouTube",
+            image_url,
+            url: t.url,
+            source: "yt",
+          };
+        });
+        results = results.concat(ytTracks);
+      }
+
+      // de-dupe
+      const seen = new Set();
+      const unique = [];
+      for (const t of results) {
+        const key = `${(t.title || "").toLowerCase().trim()}|${(t.singers || "")
+          .toLowerCase()
+          .trim()}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          unique.push(t);
+        }
+      }
+
+      setSuggestions(unique.slice(0, 8)); // only few like Spotify
+      setShowSuggestions(unique.length > 0);
+    } catch (err) {
+      console.error("fetchSuggestions failed:", err);
+      setSuggestions([]);
+      setShowSuggestions(false);
+    }
+  };
+  // 🔍 Final search submit helper – always hides suggestions
+  const submitSearch = (qOverride) => {
+    const term =
+      typeof qOverride === "string"
+        ? qOverride.trim()
+        : (searchQuery || "").trim();
+
+    if (!term) return;
+
+    // hide suggestions
+    setShowSuggestions(false);
+    setSuggestions([]);
+
+    // do NOT refocus on input – just search
+    searchSongs(term);
+  };
+
+  // typing handler with debounce
+  const handleSearchChange = (e) => {
+    const value = e.target.value;
+    setSearchQuery(value);
+
+    // ⛔ skip if input came from suggestion tap
+    if (skipNextSuggestionRef.current) {
+      skipNextSuggestionRef.current = false;
+      return;
+    }
+
+    if (suggestionTimerRef.current) {
+      clearTimeout(suggestionTimerRef.current);
+    }
+
+    const q = value.trim();
+
+    // clear suggestions if empty
+    if (!q) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      lastSuggestionQueryRef.current = "";
+      return;
+    }
+
+    // 🚀 Minimal length (avoid hammering API)
+    if (q.length < 3) {
+      return; // no call
+    }
+
+    // prevent useless duplicate searches
+    if (lastSuggestionQueryRef.current === q) return;
+
+    // debounce → search when typing stops
+    suggestionTimerRef.current = setTimeout(() => {
+      fetchSuggestions(q);
+      lastSuggestionQueryRef.current = q;
+    }, 350);
+  };
+
+  // click on a suggestion → run full search
+  const handleSuggestionClick = (track) => {
+    if (!track) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      setSearchQuery("");
+      return;
+    }
+
+    const q = `${track.title || ""} ${track.singers || ""}`.trim();
+
+    // optional: clear or show — choose one behavior
+    setSearchQuery("");
+
+    setSuggestions([]);
+    setShowSuggestions(false);
+
+    submitSearch(q); // 🔥 IMPORTANT — not searchSongs
+
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   const activeLyricRef = useRef(null);
   const syncedLyricsRef = useRef(null);
   const currentLyricIndexRef = useRef(0);
@@ -2120,13 +2413,11 @@ useEffect(() => {
     }
   }, [currentLyricIndex, followLyrics]);
   const isCurrentDJ =
-  inRoom && roomState && user?.id && roomState.current_dj === user.id;
-const isRoomOwner =
-  inRoom && roomState && user?.id && roomState.host_id === user.id;
-  const canControlRoomPlayback = !inRoom || isRoomOwner; 
-// simple rule: only host can fully control playback when in a room
-
-
+    inRoom && roomState && user?.id && roomState.current_dj === user.id;
+  const isRoomOwner =
+    inRoom && roomState && user?.id && roomState.host_id === user.id;
+  const canControlRoomPlayback = !inRoom || isRoomOwner;
+  // simple rule: only host can fully control playback when in a room
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2148,253 +2439,247 @@ const isRoomOwner =
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-useEffect(() => {
-  if (!playLatestOnLoad) return;
-  if (!tracks || tracks.length === 0) return;
 
-  // Auto-play first result
-  openPlayer(tracks[0]);
-  setPlayLatestOnLoad(false);
-}, [playLatestOnLoad, tracks]);
+  useEffect(() => {
+    if (!playLatestOnLoad) return;
+    if (!tracks || tracks.length === 0) return;
 
+    // Auto-play first result
+    openPlayer(tracks[0]);
+    setPlayLatestOnLoad(false);
+  }, [playLatestOnLoad, tracks]);
 
-const playQueueTrackNow = async (track) => {
-  if (!inRoom || !roomId || !roomState) return;
+  const playQueueTrackNow = async (track) => {
+    if (!inRoom || !roomId || !roomState) return;
 
-  if (!isRoomOwner && !isCurrentDJ) {
-    alert("Only the room owner or current DJ can change the queue playback.");
-    return;
-  }
-
-  try {
-    const currentQueue = Array.isArray(roomState.queue)
-      ? [...roomState.queue]
-      : [];
-
-    const idx = currentQueue.findIndex((t) => t.id === track.id);
-    if (idx === -1) return;
-
-    const [chosen] = currentQueue.splice(idx, 1);
-
-    const nowIso = new Date().toISOString();
-
-    const { error } = await supabase
-      .from("rooms")
-      .update({
-        current_track: chosen,
-        queue: currentQueue,
-        is_playing: true,
-        started_at: nowIso,
-        last_activity: nowIso,
-      })
-      .eq("id", roomId);
-
-    if (error) throw error;
-  } catch (e) {
-    console.error("playQueueTrackNow failed", e);
-  }
-};
-
-
-  
-// ---------- PLAYER CONTROL ----------
-const openPlayer = useCallback(
-  async (track, listContext = null) => {
-    if (!track || !track.url) return;
-
- // 🎬 1) YOUTUBE TRACKS
-if (track.source === "yt") {
-  if (inRoom) {
-    alert("YouTube tracks cannot be played inside rooms 🔐.\nLeave room to listen.");
-    return;
-  }
-
-  // Not in room ➜ local playback allowed
-  setYtLastTime(0);
-  setProgress(0);
-  setVisualMode("cover");
-  setShowCanvas(false);
-
-  // Stop normal audio
-  if (audioRef.current) {
-    audioRef.current.pause();
-    audioRef.current.currentTime = 0;
-  }
-
-  setIsYouTube(true);
-  setCurrentTrack(track);
-  setShowPlayer(true);
-  setIsPlaying(false);
-
-  // Queue
-  setQueue((prev) => {
-    if (listContext && listContext.length) {
-      const others = listContext.filter((t) => t.id !== track.id);
-      return [track, ...others];
+    if (!isRoomOwner && !isCurrentDJ) {
+      alert("Only the room owner or current DJ can change the queue playback.");
+      return;
     }
-    const base = prev.length ? prev : tracks;
-    const others = base.filter((t) => t.id !== track.id);
-    return [track, ...others];
-  });
 
-  return;
-}
+    try {
+      const currentQueue = Array.isArray(roomState.queue)
+        ? [...roomState.queue]
+        : [];
 
+      const idx = currentQueue.findIndex((t) => t.id === track.id);
+      if (idx === -1) return;
 
-    // From here down = normal AUDIO tracks (Saavn etc.)
-    // Stop YouTube player if active
-    if (ytPlayerRef.current) {
-      try {
-        ytPlayerRef.current.pauseVideo?.();
-        ytPlayerRef.current.stopVideo?.();
-      } catch (e) {
-        console.warn("Failed to stop YT player on switch", e);
+      const [chosen] = currentQueue.splice(idx, 1);
+
+      const nowIso = new Date().toISOString();
+
+      const { error } = await supabase
+        .from("rooms")
+        .update({
+          current_track: chosen,
+          queue: currentQueue,
+          is_playing: true,
+          started_at: nowIso,
+          last_activity: nowIso,
+        })
+        .eq("id", roomId);
+
+      if (error) throw error;
+    } catch (e) {
+      console.error("playQueueTrackNow failed", e);
+    }
+  };
+
+  // ---------- PLAYER CONTROL ----------
+  const openPlayer = useCallback(
+    async (track, listContext = null) => {
+      if (!track || !track.url) return;
+
+      // 🎬 1) YOUTUBE TRACKS
+      if (track.source === "yt") {
+        if (inRoom) {
+          alert(
+            "YouTube tracks cannot be played inside rooms 🔐.\nLeave room to listen."
+          );
+          return;
+        }
+
+        // Not in room ➜ local playback allowed
+        setYtLastTime(0);
+        setProgress(0);
+        setVisualMode("cover");
+        setShowCanvas(false);
+
+        // Stop normal audio
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current.currentTime = 0;
+        }
+
+        setIsYouTube(true);
+        setCurrentTrack(track);
+        setShowPlayer(true);
+        setIsPlaying(false);
+
+        // Queue
+        setQueue((prev) => {
+          if (listContext && listContext.length) {
+            const others = listContext.filter((t) => t.id !== track.id);
+            return [track, ...others];
+          }
+          const base = prev.length ? prev : tracks;
+          const others = base.filter((t) => t.id !== track.id);
+          return [track, ...others];
+        });
+
+        return;
       }
-    }
 
-    setIsYouTube(false);
-    setShowCanvas(false);
+      // From here down = normal AUDIO tracks (Saavn etc.)
+      // Stop YouTube player if active
+      if (ytPlayerRef.current) {
+        try {
+          ytPlayerRef.current.pauseVideo?.();
+          ytPlayerRef.current.stopVideo?.();
+        } catch (e) {
+          console.warn("Failed to stop YT player on switch", e);
+        }
+      }
 
-    // 🚪 2) ROOM MODE (shared listening for audio tracks)
-    if (inRoom && roomId) {
-      // There is already a song playing in this room → treat as "add to queue"
-      if (roomState && roomState.current_track) {
-        // Only host or current DJ can modify queue
-        if (!isRoomOwner && !isCurrentDJ) {
-          alert("Only the room host or current DJ can add to queue right now 🎲");
+      setIsYouTube(false);
+      setShowCanvas(false);
+
+      // 🚪 2) ROOM MODE (shared listening for audio tracks)
+      if (inRoom && roomId) {
+        // There is already a song playing in this room → treat as "add to queue"
+        if (roomState && roomState.current_track) {
+          // Only host or current DJ can modify queue
+          if (!isRoomOwner && !isCurrentDJ) {
+            alert(
+              "Only the room host or current DJ can add to queue right now 🎲"
+            );
+            return;
+          }
+
+          try {
+            const currentQueue = Array.isArray(roomState.queue)
+              ? roomState.queue
+              : [];
+
+            const { error } = await supabase
+              .from("rooms")
+              .update({
+                queue: [...currentQueue, track],
+                last_activity: new Date().toISOString(),
+              })
+              .eq("id", roomId);
+
+            if (error) throw error;
+          } catch (e) {
+            console.error("Add to queue failed", e);
+          }
+
+          return;
+        }
+
+        // No current_track yet → this is the *first* song of the room
+        // 👉 Only the HOST can start the very first song
+        if (!isRoomOwner) {
+          alert("Only the room owner can start playback in this room.");
           return;
         }
 
         try {
-          const currentQueue = Array.isArray(roomState.queue)
-            ? roomState.queue
-            : [];
+          const nowIso = new Date().toISOString();
+
+          const nextDj =
+            roomMembers && roomMembers.length > 0
+              ? roomMembers[Math.floor(Math.random() * roomMembers.length)]
+                  .user_id
+              : user?.id;
 
           const { error } = await supabase
             .from("rooms")
             .update({
-              queue: [...currentQueue, track],
-              last_activity: new Date().toISOString(),
+              current_track: track,
+              is_playing: true,
+              started_at: nowIso,
+              last_activity: nowIso,
+              current_dj: nextDj,
             })
             .eq("id", roomId);
 
           if (error) throw error;
         } catch (e) {
-          console.error("Add to queue failed", e);
+          console.error("Room play failed", e);
         }
 
-        return;
+        return; // everyone will sync via realtime
       }
 
-      // No current_track yet → this is the *first* song of the room
-      // 👉 Only the HOST can start the very first song
-      if (!isRoomOwner) {
-        alert("Only the room owner can start playback in this room.");
-        return;
+      // 🎧 3) NORMAL (non-room) behaviour — local audio playback
+      let audio = audioRef.current;
+      if (!audio) {
+        audio = new Audio();
+        audioRef.current = audio;
       }
 
-      try {
-        const nowIso = new Date().toISOString();
+      setCurrentTrack(track);
+      setShowPlayer(true);
+      audio.src = track.url;
 
-        const nextDj =
-          roomMembers && roomMembers.length > 0
-            ? roomMembers[Math.floor(Math.random() * roomMembers.length)]
-                .user_id
-            : user?.id;
+      audio
+        .play()
+        .then(() => {
+          setIsPlaying(true);
+        })
+        .catch(() => {
+          setIsPlaying(false);
+        });
 
-        const { error } = await supabase
-          .from("rooms")
-          .update({
-            current_track: track,
-            is_playing: true,
-            started_at: nowIso,
-            last_activity: nowIso,
-            current_dj: nextDj,
-          })
-          .eq("id", roomId);
-
-        if (error) throw error;
-      } catch (e) {
-        console.error("Room play failed", e);
-      }
-
-      return; // everyone will sync via realtime
-    }
-
-    // 🎧 3) NORMAL (non-room) behaviour — local audio playback
-    let audio = audioRef.current;
-    if (!audio) {
-      audio = new Audio();
-      audioRef.current = audio;
-    }
-
-    setCurrentTrack(track);
-    setShowPlayer(true);
-    audio.src = track.url;
-
-    audio
-      .play()
-      .then(() => {
-        setIsPlaying(true);
-      })
-      .catch(() => {
-        setIsPlaying(false);
-      });
-
-    setQueue((prev) => {
-      if (listContext && listContext.length) {
-        const others = listContext.filter((t) => t.id !== track.id);
+      setQueue((prev) => {
+        if (listContext && listContext.length) {
+          const others = listContext.filter((t) => t.id !== track.id);
+          return [track, ...others];
+        }
+        const base = prev.length ? prev : tracks;
+        const others = base.filter((t) => t.id !== track.id);
         return [track, ...others];
-      }
-      const base = prev.length ? prev : tracks;
-      const others = base.filter((t) => t.id !== track.id);
-      return [track, ...others];
-    });
-  },
-  [
-    inRoom,
-    roomId,
-    roomState,
-    isRoomOwner,   // 👈 IMPORTANT: added
-    isCurrentDJ,
-    roomMembers,
-    tracks,
-    user?.id,
-  ]
-);
+      });
+    },
+    [
+      inRoom,
+      roomId,
+      roomState,
+      isRoomOwner, // 👈 IMPORTANT: added
+      isCurrentDJ,
+      roomMembers,
+      tracks,
+      user?.id,
+    ]
+  );
 
+  const playNext = useCallback(() => {
+    if (!queue.length) return;
 
+    let next;
+    if (shuffle && queue.length > 1) {
+      const randomIndex = Math.floor(Math.random() * queue.length);
+      next = queue[randomIndex];
+    } else {
+      const currentIndex = queue.findIndex((t) => t.id === currentTrack?.id);
+      const nextIndex = currentIndex === -1 ? 1 : currentIndex + 1;
+      next = queue[nextIndex];
+    }
 
+    if (next) openPlayer(next);
+  }, [queue, shuffle, currentTrack, openPlayer]);
 
+  const playPrev = useCallback(() => {
+    if (!queue.length) return;
 
-const playNext = useCallback(() => {
-  if (!queue.length) return;
-
-  let next;
-  if (shuffle && queue.length > 1) {
-    const randomIndex = Math.floor(Math.random() * queue.length);
-    next = queue[randomIndex];
-  } else {
     const currentIndex = queue.findIndex((t) => t.id === currentTrack?.id);
-    const nextIndex = currentIndex === -1 ? 1 : currentIndex + 1;
-    next = queue[nextIndex];
-  }
+    const prevIndex = currentIndex > 0 ? currentIndex - 1 : 0;
+    const prev = queue[prevIndex];
 
-  if (next) openPlayer(next);
-}, [queue, shuffle, currentTrack, openPlayer]);
-
-const playPrev = useCallback(() => {
-  if (!queue.length) return;
-
-  const currentIndex = queue.findIndex((t) => t.id === currentTrack?.id);
-  const prevIndex = currentIndex > 0 ? currentIndex - 1 : 0;
-  const prev = queue[prevIndex];
-
-  if (prev) openPlayer(prev);
-}, [queue, currentTrack, openPlayer]);
-
-
+    if (prev) openPlayer(prev);
+  }, [queue, currentTrack, openPlayer]);
 
   const handleRoomPlayPause = async () => {
     if (!inRoom || !roomId || !roomState) return;
@@ -2445,110 +2730,110 @@ const playPrev = useCallback(() => {
   };
 
   const handlePlayPause = useCallback(() => {
-  // 🎬 YouTube play/pause
-  if (isYouTube) {
-    const player = ytPlayerRef.current;
+    // 🎬 YouTube play/pause
+    if (isYouTube) {
+      const player = ytPlayerRef.current;
 
-    // If player doesn't exist (full player closed), just open it
-    if (!player || !window.YT?.PlayerState) {
-      setShowPlayer(true); // this will mount yt-player div and recreate iframe
+      // If player doesn't exist (full player closed), just open it
+      if (!player || !window.YT?.PlayerState) {
+        setShowPlayer(true); // this will mount yt-player div and recreate iframe
+        return;
+      }
+
+      const state = player.getPlayerState();
+
+      if (state === window.YT.PlayerState.PLAYING) {
+        player.pauseVideo();
+        setIsPlaying(false);
+      } else {
+        player.playVideo();
+        setIsPlaying(true);
+      }
       return;
     }
 
-    const state = player.getPlayerState();
+    const audio = audioRef.current;
+    if (!audio) return;
 
-    if (state === window.YT.PlayerState.PLAYING) {
-      player.pauseVideo();
-      setIsPlaying(false);
+    if (audio.paused) {
+      audio
+        .play()
+        .then(() => {
+          setIsPlaying(true);
+        })
+        .catch(() => {
+          setIsPlaying(false);
+        });
     } else {
-      player.playVideo();
-      setIsPlaying(true);
+      audio.pause();
+      setIsPlaying(false);
     }
-    return;
-  }
-
-  const audio = audioRef.current;
-  if (!audio) return;
-
-  if (audio.paused) {
-    audio
-      .play()
-      .then(() => {
-        setIsPlaying(true);
-      })
-      .catch(() => {
-        setIsPlaying(false);
-      });
-  } else {
-    audio.pause();
-    setIsPlaying(false);
-  }
-}, [isYouTube]);
+  }, [isYouTube]);
 
   useEffect(() => {
-  if (typeof navigator === "undefined" || !("mediaSession" in navigator)) {
-    return;
-  }
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) {
+      return;
+    }
 
-  // If no track or it's a YouTube track → clear media session metadata
-  if (!currentTrack || isYouTube) {
+    // If no track or it's a YouTube track → clear media session metadata
+    if (!currentTrack || isYouTube) {
+      try {
+        navigator.mediaSession.metadata = null;
+        navigator.mediaSession.playbackState = "none";
+
+        // Clear action handlers
+        ["play", "pause", "previoustrack", "nexttrack"].forEach((action) => {
+          try {
+            navigator.mediaSession.setActionHandler(action, null);
+          } catch (e) {
+            console.warn("MediaSession failed:", e);
+          }
+        });
+      } catch (e) {
+        console.warn("MediaSession clear failed", e);
+      }
+      return;
+    }
+
+    // Only for Saavn / normal audio tracks
     try {
-      navigator.mediaSession.metadata = null;
-      navigator.mediaSession.playbackState = "none";
+      // 1️⃣ Set what shows on lockscreen / notification
+      navigator.mediaSession.metadata = new window.MediaMetadata({
+        title: currentTrack.title || "Unknown title",
+        artist: currentTrack.singers || "Unknown artist",
+        album: "Saavnify ULTRA",
+        artwork: [
+          {
+            src: currentTrack.image_url,
+            sizes: "512x512",
+            type: "image/jpeg",
+          },
+        ],
+      });
 
-      // Clear action handlers
-      ["play", "pause", "previoustrack", "nexttrack"].forEach((action) => {
-        try {
-          navigator.mediaSession.setActionHandler(action, null);
-        } catch (e) {
-          console.warn("MediaSession failed:", e);
-        }
+      // 2️⃣ Set playback state
+      navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
+
+      // 3️⃣ Wire hardware / lockscreen buttons
+      navigator.mediaSession.setActionHandler("play", () => {
+        handlePlayPause();
+      });
+
+      navigator.mediaSession.setActionHandler("pause", () => {
+        handlePlayPause();
+      });
+
+      navigator.mediaSession.setActionHandler("previoustrack", () => {
+        playPrev();
+      });
+
+      navigator.mediaSession.setActionHandler("nexttrack", () => {
+        playNext();
       });
     } catch (e) {
-      console.warn("MediaSession clear failed", e);
+      console.warn("MediaSession setup failed", e);
     }
-    return;
-  }
-
-  // Only for Saavn / normal audio tracks
-  try {
-    // 1️⃣ Set what shows on lockscreen / notification
-    navigator.mediaSession.metadata = new window.MediaMetadata({
-      title: currentTrack.title || "Unknown title",
-      artist: currentTrack.singers || "Unknown artist",
-      album: "Saavnify ULTRA",
-      artwork: [
-        {
-          src: currentTrack.image_url,
-          sizes: "512x512",
-          type: "image/jpeg",
-        },
-      ],
-    });
-
-    // 2️⃣ Set playback state
-    navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
-
-    // 3️⃣ Wire hardware / lockscreen buttons
-    navigator.mediaSession.setActionHandler("play", () => {
-      handlePlayPause();
-    });
-
-    navigator.mediaSession.setActionHandler("pause", () => {
-      handlePlayPause();
-    });
-
-    navigator.mediaSession.setActionHandler("previoustrack", () => {
-      playPrev();
-    });
-
-    navigator.mediaSession.setActionHandler("nexttrack", () => {
-      playNext();
-    });
-  } catch (e) {
-    console.warn("MediaSession setup failed", e);
-  }
-}, [currentTrack, isYouTube, isPlaying, handlePlayPause, playNext, playPrev]);
+  }, [currentTrack, isYouTube, isPlaying, handlePlayPause, playNext, playPrev]);
 
   const handleDownloadCurrent = () => {
     if (!currentTrack || !currentTrack.url) return;
@@ -2672,150 +2957,148 @@ const playPrev = useCallback(() => {
   };
 
   // ---------- AUDIO EVENTS ----------
-useEffect(() => {
-  const audio = audioRef.current;
-  if (!audio || isYouTube) return; // nothing to attach for YT
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || isYouTube) return; // nothing to attach for YT
 
-  const onTimeUpdate = () => {
-    if (!audio.duration) return;
-    const pct = (audio.currentTime / audio.duration) * 100 || 0;
-    setProgress(pct);
+    const onTimeUpdate = () => {
+      if (!audio.duration) return;
+      const pct = (audio.currentTime / audio.duration) * 100 || 0;
+      setProgress(pct);
 
-    if (syncedLyrics && syncedLyrics.length > 0) {
-      const t = audio.currentTime;
-      const idx = syncedLyrics.findIndex((line, i) => {
-        const nextTime =
-          i === syncedLyrics.length - 1 ? Infinity : syncedLyrics[i + 1].time;
-        return t >= line.time && t < nextTime;
-      });
-      if (idx !== -1 && idx !== currentLyricIndex) {
-        setCurrentLyricIndex(idx);
-      }
-    }
-
-    if (currentTrack) {
-      const state = {
-        currentTrack,
-        queue,
-        currentTime: audio.currentTime,
-        progress: pct,
-      };
-      try {
-        window.localStorage.setItem(
-          "saavnify_playback",
-          JSON.stringify(state)
-        );
-      } catch (err) {
-        console.log("Failed to save playback:", err);
-      }
-    }
-  };
-
-  const onEnded = () => {
-    if (inRoom && roomId) {
-      // 🛡 Only room owner OR current DJ is allowed to advance the queue
-      const isRoomOwner = user?.id && roomState?.host_id === user.id;
-      const isDj = user?.id && roomState?.current_dj === user.id;
-
-      if (!isRoomOwner && !isDj) {
-        // Other members just wait for realtime update
-        return;
+      if (syncedLyrics && syncedLyrics.length > 0) {
+        const t = audio.currentTime;
+        const idx = syncedLyrics.findIndex((line, i) => {
+          const nextTime =
+            i === syncedLyrics.length - 1 ? Infinity : syncedLyrics[i + 1].time;
+          return t >= line.time && t < nextTime;
+        });
+        if (idx !== -1 && idx !== currentLyricIndex) {
+          setCurrentLyricIndex(idx);
+        }
       }
 
-      // In a room: take first item from shared queue
-      (async () => {
+      if (currentTrack) {
+        const state = {
+          currentTrack,
+          queue,
+          currentTime: audio.currentTime,
+          progress: pct,
+        };
         try {
-          const { data: room, error } = await supabase
-            .from("rooms")
-            .select("queue")
-            .eq("id", roomId)
-            .single();
+          window.localStorage.setItem(
+            "saavnify_playback",
+            JSON.stringify(state)
+          );
+        } catch (err) {
+          console.log("Failed to save playback:", err);
+        }
+      }
+    };
 
-          if (error) {
-            console.error("Failed to load room in onEnded:", error);
-            return;
-          }
+    const onEnded = () => {
+      if (inRoom && roomId) {
+        // 🛡 Only room owner OR current DJ is allowed to advance the queue
+        const isRoomOwner = user?.id && roomState?.host_id === user.id;
+        const isDj = user?.id && roomState?.current_dj === user.id;
 
-          const queueArr = Array.isArray(room?.queue) ? room.queue : [];
+        if (!isRoomOwner && !isDj) {
+          // Other members just wait for realtime update
+          return;
+        }
 
-          if (queueArr.length === 0) {
+        // In a room: take first item from shared queue
+        (async () => {
+          try {
+            const { data: room, error } = await supabase
+              .from("rooms")
+              .select("queue")
+              .eq("id", roomId)
+              .single();
+
+            if (error) {
+              console.error("Failed to load room in onEnded:", error);
+              return;
+            }
+
+            const queueArr = Array.isArray(room?.queue) ? room.queue : [];
+
+            if (queueArr.length === 0) {
+              await supabase
+                .from("rooms")
+                .update({
+                  current_track: null,
+                  is_playing: false,
+                })
+                .eq("id", roomId);
+              return;
+            }
+
+            const [nextTrack, ...remaining] = queueArr;
+
+            const nowIso = new Date().toISOString();
+            const nextDj =
+              roomMembers && roomMembers.length > 0
+                ? roomMembers[Math.floor(Math.random() * roomMembers.length)]
+                    .user_id
+                : user?.id || null;
+
             await supabase
               .from("rooms")
               .update({
-                current_track: null,
-                is_playing: false,
+                current_track: nextTrack,
+                queue: remaining,
+                is_playing: true,
+                started_at: nowIso,
+                last_activity: nowIso,
+                current_dj: nextDj,
               })
               .eq("id", roomId);
-            return;
+          } catch (err) {
+            console.error("Room onEnded failed", err);
           }
+        })();
 
-          const [nextTrack, ...remaining] = queueArr;
+        return;
+      }
 
-          const nowIso = new Date().toISOString();
-          const nextDj =
-            roomMembers && roomMembers.length > 0
-              ? roomMembers[Math.floor(Math.random() * roomMembers.length)]
-                  .user_id
-              : user?.id || null;
+      // normal behaviour when not in a room
+      if (repeat) {
+        audio.currentTime = 0;
+        audio.play();
+      } else {
+        playNext();
+      }
+    };
 
-          await supabase
-            .from("rooms")
-            .update({
-              current_track: nextTrack,
-              queue: remaining,
-              is_playing: true,
-              started_at: nowIso,
-              last_activity: nowIso,
-              current_dj: nextDj,
-            })
-            .eq("id", roomId);
-        } catch (err) {
-          console.error("Room onEnded failed", err);
-        }
-      })();
+    const onPlay = () => setIsPlaying(true);
+    const onPause = () => setIsPlaying(false);
 
-      return;
-    }
+    audio.addEventListener("timeupdate", onTimeUpdate);
+    audio.addEventListener("ended", onEnded);
+    audio.addEventListener("play", onPlay);
+    audio.addEventListener("pause", onPause);
 
-    // normal behaviour when not in a room
-    if (repeat) {
-      audio.currentTime = 0;
-      audio.play();
-    } else {
-      playNext();
-    }
-  };
-
-  const onPlay = () => setIsPlaying(true);
-  const onPause = () => setIsPlaying(false);
-
-  audio.addEventListener("timeupdate", onTimeUpdate);
-  audio.addEventListener("ended", onEnded);
-  audio.addEventListener("play", onPlay);
-  audio.addEventListener("pause", onPause);
-
-  return () => {
-    audio.removeEventListener("timeupdate", onTimeUpdate);
-    audio.removeEventListener("ended", onEnded);
-    audio.removeEventListener("play", onPlay);
-    audio.removeEventListener("pause", onPause);
-  };
-}, [
-  isYouTube,
-  syncedLyrics,
-  currentLyricIndex,
-  currentTrack,
-  queue,
-  inRoom,
-  roomId,
-  roomMembers,
-  roomState,
-  repeat,
-  user,
-  playNext,
-]);
-
-
+    return () => {
+      audio.removeEventListener("timeupdate", onTimeUpdate);
+      audio.removeEventListener("ended", onEnded);
+      audio.removeEventListener("play", onPlay);
+      audio.removeEventListener("pause", onPause);
+    };
+  }, [
+    isYouTube,
+    syncedLyrics,
+    currentLyricIndex,
+    currentTrack,
+    queue,
+    inRoom,
+    roomId,
+    roomMembers,
+    roomState,
+    repeat,
+    user,
+    playNext,
+  ]);
 
   const particlesInit = async (engine) => {
     await loadFull(engine);
@@ -2888,11 +3171,16 @@ useEffect(() => {
               <input
                 type="text"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && searchSongs()}
+                onChange={handleSearchChange} // 👈 use global handler
+                onKeyDown={(e) => e.key === "Enter" && submitSearch()}
                 placeholder="Search songs, artists..."
                 className="px-4 py-2 rounded-full bg-white/10 border border-white/20 text-white w-56
-      focus:outline-none focus:border-cyan-500 transition"
+    focus:outline-none focus:border-cyan-500 transition"
+                onFocus={() => {
+                  if (suggestions.length > 0) {
+                    setShowSuggestions(true); // optionally reopen only on focus
+                  }
+                }}
               />
 
               <button
@@ -2926,8 +3214,6 @@ useEffect(() => {
                 Search
               </button>
 
-
-
               {/* 🎧 Room controls – desktop */}
               {!inRoom && (
                 <button
@@ -2957,100 +3243,59 @@ useEffect(() => {
                   </button>
 
                   {/* 🔒 Only owner sees End Room */}
-                {roomState?.host_id === user?.id && (
-  <button
-    onClick={handleDeleteRoom}
-    className="px-3 py-1 rounded-full bg-red-500/80 hover:bg-red-500 text-xs font-semibold"
-  >
-    End Room
-  </button>
-)}
-
+                  {roomState?.host_id === user?.id && (
+                    <button
+                      onClick={handleDeleteRoom}
+                      className="px-3 py-1 rounded-full bg-red-500/80 hover:bg-red-500 text-xs font-semibold"
+                    >
+                      End Room
+                    </button>
+                  )}
                 </>
               )}
               {/* Avatar + name (desktop) – opens Account tab */}
-<button
-  type="button"
-  onClick={() => setActiveTab("account")}
-  className="flex items-center gap-3 mr-2 px-2 py-1 rounded-2xl hover:bg-white/10 transition"
->
-  <div className="relative">
-    {avatarUrl ? (
-      <img
-        src={avatarUrl}
-        alt={user?.name || "Avatar"}
-        className="w-9 h-9 rounded-full object-cover border border-white/30"
-      />
-    ) : (
-      <div className="w-9 h-9 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-xs">
-        {(user?.name || "U").charAt(0).toUpperCase()}
-      </div>
-    )}
-  </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab("account")}
+                className="flex items-center gap-3 mr-2 px-2 py-1 rounded-2xl hover:bg-white/10 transition"
+              >
+                <div className="relative">
+                  {avatarUrl ? (
+                    <img
+                      src={avatarUrl}
+                      alt={user?.name || "Avatar"}
+                      className="w-9 h-9 rounded-full object-cover border border-white/30"
+                    />
+                  ) : (
+                    <div className="w-9 h-9 rounded-full bg-white/10 border border-white/20 flex items-center justify-center text-xs">
+                      {(user?.name || "U").charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                </div>
 
-  <div className="flex flex-col items-start">
-    <span className="text-xs font-semibold">
-      {user?.name || "Saavnify User"}
-    </span>
-    <span className="text-[10px] text-gray-400 max-w-[120px] truncate">
-      {user?.email}
-    </span>
-  </div>
-</button>
+                <div className="flex flex-col items-start">
+                  <span className="text-xs font-semibold">
+                    {user?.name || "Saavnify User"}
+                  </span>
+                  <span className="text-[10px] text-gray-400 max-w-[120px] truncate">
+                    {user?.email}
+                  </span>
+                </div>
+              </button>
 
-
-             <button
-  onClick={performLogout}
-  className="px-3 py-1 rounded-full bg-red-500/80 hover:bg-red-500 text-sm"
->
-  Logout
-</button>
-<button
-  onClick={handleEnableNotifications}
-  className="px-3 py-1 rounded-full bg-emerald-500/80 hover:bg-emerald-500 text-sm"
->
-  Enable Notifications
-</button>
-
-
+              <button
+                onClick={performLogout}
+                className="px-3 py-1 rounded-full bg-red-500/80 hover:bg-red-500 text-sm"
+              >
+                Logout
+              </button>
+              <button
+                onClick={handleEnableNotifications}
+                className="px-3 py-1 rounded-full bg-emerald-500/80 hover:bg-emerald-500 text-sm"
+              >
+                Enable Notifications
+              </button>
             </div>
-            <div className="md:hidden flex items-center gap-2">
-  {!inRoom && (
-    <button
-      onClick={createRoom}
-      className="px-3 py-1 rounded-full bg-emerald-500/80 hover:bg-emerald-500 text-xs"
-    >
-      Create Room
-    </button>
-  )}
-
-  {inRoom && roomId && (
-    <>
-      <button
-        onClick={shareRoom}
-        className="px-3 py-1 rounded-full bg-white/10 hover:bg-white/20 text-[11px]"
-      >
-        Share
-      </button>
-
-      <button
-        onClick={leaveRoom}
-        className="px-3 py-1 rounded-full bg-orange-500/80 hover:bg-orange-500 text-[11px]"
-      >
-        Leave
-      </button>
-
-      {roomState?.host_id === user?.id && (
-        <button
-          onClick={handleDeleteRoom}
-          className="px-3 py-1 rounded-full bg-red-500/80 hover:bg-red-500 text-[11px] font-semibold"
-        >
-          End
-        </button>
-      )}
-    </>
-  )}
-</div>
           </header>
           {offline && (
             <div className="mx-4 mt-3 mb-2 rounded-2xl bg-yellow-500/10 border border-yellow-400/40 text-yellow-200 text-xs px-4 py-2 flex items-center justify-between">
@@ -3078,15 +3323,19 @@ useEffect(() => {
             </section>
           )}
 
-          {/* SEARCH BAR (only in Search tab) */}
           {activeTab === "search" && (
             <SearchScreen
               searchQuery={searchQuery}
               setSearchQuery={setSearchQuery}
-              searchSongs={searchSongs}
+              searchSongs={submitSearch} // ✅ use wrapper
               tracks={tracks}
               openPlayer={openPlayer}
               loading={loading}
+              suggestions={suggestions}
+              showSuggestions={showSuggestions}
+              onSearchChange={handleSearchChange}
+              onSuggestionClick={handleSuggestionClick}
+              onManualSearch={() => submitSearch(searchQuery)}
             />
           )}
 
@@ -3184,7 +3433,7 @@ useEffect(() => {
           )}
 
           {/* GRID OF TRACKS (search OR library) */}
-               
+
           {activeTab === "account" ? (
             <ProfileScreen
               user={user}
@@ -3195,7 +3444,13 @@ useEffect(() => {
               profileSaving={profileSaving}
               onAvatarUpload={handleAvatarUpload}
               onSaveProfile={handleSaveProfile}
-              
+              inRoom={inRoom}
+              isRoomOwner={isRoomOwner}
+              onCreateRoom={createRoom}
+              onShareRoom={shareRoom}
+              onLeaveRoom={leaveRoom}
+              onEndRoom={handleDeleteRoom}
+              onLogout={performLogout}
             />
           ) : (
             <div className="px-4">
@@ -3242,9 +3497,8 @@ useEffect(() => {
             </div>
           )}
 
-
           {/* MINI PLAYER (BOTTOM) */}
-          {currentTrack && (
+         {currentTrack && !(activeTab === "account" && isMobile) && (
             <div className="fixed bottom-14 md:bottom-4 left-1/2 -translate-x-1/2 w-[96%] md:w-[70%] lg:w-[55%] bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl px-4 py-3 flex items-center justify-between gap-3 shadow-2xl">
               <div
                 className="flex items-center gap-3 cursor-pointer"
@@ -3274,49 +3528,48 @@ useEffect(() => {
                 </div>
               </div>
               <div className="flex items-center gap-2 sm:gap-4">
-  {/* ⏮ PREV */}
-  <button
-    onClick={canControlRoomPlayback ? playPrev : undefined}
-    disabled={!canControlRoomPlayback}
-    className={`text-gray-200 ${
-      !canControlRoomPlayback
-        ? "opacity-40 cursor-not-allowed"
-        : "hover:scale-110 transition-transform"
-    }`}
-  >
-    <SkipBack size={18} />
-  </button>
+                {/* ⏮ PREV */}
+                <button
+                  onClick={canControlRoomPlayback ? playPrev : undefined}
+                  disabled={!canControlRoomPlayback}
+                  className={`text-gray-200 ${
+                    !canControlRoomPlayback
+                      ? "opacity-40 cursor-not-allowed"
+                      : "hover:scale-110 transition-transform"
+                  }`}
+                >
+                  <SkipBack size={18} />
+                </button>
 
-  {/* ▶ / ⏸ */}
-  <button
-    onClick={inRoom ? handleRoomPlayPause : handlePlayPause}
-    disabled={inRoom && !isRoomOwner}
-    className={`w-9 h-9 rounded-full flex items-center justify-center ${
-      inRoom && !isRoomOwner
-        ? "opacity-40 cursor-not-allowed"
-        : "hover:opacity-90"
-    }`}
-    style={{
-      background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
-    }}
-  >
-    {isPlaying ? <Pause size={18} /> : <Play size={18} />}
-  </button>
+                {/* ▶ / ⏸ */}
+                <button
+                  onClick={inRoom ? handleRoomPlayPause : handlePlayPause}
+                  disabled={inRoom && !isRoomOwner}
+                  className={`w-9 h-9 rounded-full flex items-center justify-center ${
+                    inRoom && !isRoomOwner
+                      ? "opacity-40 cursor-not-allowed"
+                      : "hover:opacity-90"
+                  }`}
+                  style={{
+                    background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
+                  }}
+                >
+                  {isPlaying ? <Pause size={18} /> : <Play size={18} />}
+                </button>
 
-  {/* ⏭ NEXT */}
-  <button
-    onClick={canControlRoomPlayback ? playNext : undefined}
-    disabled={!canControlRoomPlayback}
-    className={`text-gray-200 ${
-      !canControlRoomPlayback
-        ? "opacity-40 cursor-not-allowed"
-        : "hover:scale-110 transition-transform"
-    }`}
-  >
-    <SkipForward size={18} />
-  </button>
-</div>
-
+                {/* ⏭ NEXT */}
+                <button
+                  onClick={canControlRoomPlayback ? playNext : undefined}
+                  disabled={!canControlRoomPlayback}
+                  className={`text-gray-200 ${
+                    !canControlRoomPlayback
+                      ? "opacity-40 cursor-not-allowed"
+                      : "hover:scale-110 transition-transform"
+                  }`}
+                >
+                  <SkipForward size={18} />
+                </button>
+              </div>
             </div>
           )}
 
@@ -3337,7 +3590,7 @@ useEffect(() => {
                 activeTab === "search" ? "text-cyan-400" : "text-gray-300"
               }`}
             >
-              <Search size={20} />
+              <SearchIcon size={20} />
               <span>Search</span>
             </button>
             <button
@@ -3417,24 +3670,22 @@ useEffect(() => {
               </div>
             </div>
           )}
-
-       
         </div>
       )}
 
       {/* FULL PLAYER */}
       {showPlayer && currentTrack && (
         <div className="fixed inset-0 bg-black text-white overflow-y-auto relative">
-        {isYouTube && showCanvas && (
-  <div className="absolute inset-0 z-0 overflow-hidden">
-    <div
-      id="yt-canvas-player"
-      className="w-full h-full object-cover"
-      style={{ pointerEvents: "none" }}
-    />
-    <div className="absolute inset-0 bg-black/35" />
-  </div>
-)}
+          {isYouTube && showCanvas && (
+            <div className="absolute inset-0 z-0 overflow-hidden">
+              <div
+                id="yt-canvas-player"
+                className="w-full h-full object-cover"
+                style={{ pointerEvents: "none" }}
+              />
+              <div className="absolute inset-0 bg-black/35" />
+            </div>
+          )}
 
           {/* Background particles – ❌ skip on mobile */}
           {!isMobile && (
@@ -3462,34 +3713,29 @@ useEffect(() => {
               Offline — streaming may fail, but your downloads are safe.
             </div>
           )}
-          
-
-
 
           <div className="relative min-h-screen flex flex-col md:flex-row items-start md:items-start justify-center md:justify-between px-4 md:px-10 py-6 md:py-10 gap-8 md:gap-12">
             <button
-  onClick={() => {
-    // For YT, just close the UI. Let the hidden #yt-player keep playing.
-    setShowPlayer(false);
-  }}
-  className="absolute top-4 right-4 md:top-8 md:right-8 z-50 hover:scale-110 transition-transform"
->
-  <X size={34} />
-</button>
+              onClick={() => {
+                // For YT, just close the UI. Let the hidden #yt-player keep playing.
+                setShowPlayer(false);
+              }}
+              className="absolute top-4 right-4 md:top-8 md:right-8 z-50 hover:scale-110 transition-transform"
+            >
+              <X size={34} />
+            </button>
 
-                  {isYouTube && (
-                <button
-                  onClick={() => setShowCanvas((v) => !v)}
-                  className="absolute top-4 right-20 md:top-8 md:right-28 z-50 px-4 py-2 rounded-full bg-white/10 border border-white/30 text-xs md:text-sm hover:bg-white/20"
-                >
-                  {showCanvas ? "Music" : "Canvas"}
-                </button>
-              )}
+            {isYouTube && (
+              <button
+                onClick={() => setShowCanvas((v) => !v)}
+                className="absolute top-4 right-20 md:top-8 md:right-28 z-50 px-4 py-2 rounded-full bg-white/10 border border-white/30 text-xs md:text-sm hover:bg-white/20"
+              >
+                {showCanvas ? "Music" : "Canvas"}
+              </button>
+            )}
 
             {/* LEFT: Visualizer */}
             <div className="flex-1 flex flex-col items-center justify-start pb-10 min-h-[calc(100vh-80px)]">
-                        
-
               {!isYouTube && (
                 <button
                   onClick={() => {
@@ -3503,35 +3749,34 @@ useEffect(() => {
                     : "Show Album Cover"}
                 </button>
               )}
-        
 
-           <div className="relative w-full flex items-center justify-center h-[260px] md:h-[340px] lg:h-[400px] overflow-hidden">
-  {/* Canvas host is ALWAYS here; visibility controlled by showCanvas */}
-  <div
-    className={`absolute inset-0 -z-10 transition-opacity duration-500 ${
-      isYouTube && showCanvas
-        ? "opacity-60"
-        : "opacity-0 pointer-events-none"
-    }`}
-  >
-    <div id="yt-canvas-player" className="w-full h-full" />
-    {/* dark overlay so controls stay readable */}
-    <div className="absolute inset-0 bg-black/40" />
-  </div>
+              <div className="relative w-full flex items-center justify-center h-[260px] md:h-[340px] lg:h-[400px] overflow-hidden">
+                {/* Canvas host is ALWAYS here; visibility controlled by showCanvas */}
+                <div
+                  className={`absolute inset-0 -z-10 transition-opacity duration-500 ${
+                    isYouTube && showCanvas
+                      ? "opacity-60"
+                      : "opacity-0 pointer-events-none"
+                  }`}
+                >
+                  <div id="yt-canvas-player" className="w-full h-full" />
+                  {/* dark overlay so controls stay readable */}
+                  <div className="absolute inset-0 bg-black/40" />
+                </div>
 
-  {isYouTube || visualMode === "cover" ? (
-    <img
-      src={currentTrack.image_url}
-      alt={currentTrack.title}
-      className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
-        isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
-      }`}
-      style={{
-        boxShadow: `0 0 90px ${theme.primary}aa`,
-        border: "3px solid rgba(255,255,255,0.25)",
-      }}
-    />
-  ) :  (
+                {isYouTube || visualMode === "cover" ? (
+                  <img
+                    src={currentTrack.image_url}
+                    alt={currentTrack.title}
+                    className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
+                      isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
+                    }`}
+                    style={{
+                      boxShadow: `0 0 90px ${theme.primary}aa`,
+                      border: "3px solid rgba(255,255,255,0.25)",
+                    }}
+                  />
+                ) : (
                   // 🌌 Sphere visualizer (only for non-YT + visualMode === "sphere")
                   <div className="relative flex items-center justify-center w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem]">
                     {!isMobile && (
@@ -3630,58 +3875,60 @@ useEffect(() => {
 
               {/* CONTROLS FIRST */}
               <div
-  className={`sticky top-0 pt-6 pb-4 flex flex-col items-center ${
-    isYouTube && showCanvas
-      ? "bg-transparent"                 // 👈 no big black rectangle on canvas
-      : "bg-black/80 backdrop-blur-lg"   // 👈 old style for normal mode
-  }`}
->
+                className={`sticky top-0 pt-6 pb-4 flex flex-col items-center ${
+                  isYouTube && showCanvas
+                    ? "bg-transparent" // 👈 no big black rectangle on canvas
+                    : "bg-black/80 backdrop-blur-lg" // 👈 old style for normal mode
+                }`}
+              >
                 {/* Main transport controls */}
-               <div className="flex items-center justify-center gap-6 text-2xl md:text-3xl">
-  {/* ⏮ PREV */}
-  <button
-    onClick={canControlRoomPlayback ? playPrev : undefined}
-    disabled={!canControlRoomPlayback}
-    className={
-      "transition-transform " +
-      (!canControlRoomPlayback
-        ? "text-gray-500 opacity-40 cursor-not-allowed"
-        : "text-gray-200 hover:scale-110")
-    }
-  >
-    <SkipBack />
-  </button>
+                <div className="flex items-center justify-center gap-6 text-2xl md:text-3xl">
+                  {/* ⏮ PREV */}
+                  <button
+                    onClick={canControlRoomPlayback ? playPrev : undefined}
+                    disabled={!canControlRoomPlayback}
+                    className={
+                      "transition-transform " +
+                      (!canControlRoomPlayback
+                        ? "text-gray-500 opacity-40 cursor-not-allowed"
+                        : "text-gray-200 hover:scale-110")
+                    }
+                  >
+                    <SkipBack />
+                  </button>
 
-  {/* ▶ / ⏸ – room uses handleRoomPlayPause, local uses handlePlayPause */}
-  <button
-    onClick={inRoom ? handleRoomPlayPause : handlePlayPause}
-    disabled={inRoom && !isRoomOwner}
-    className={
-      "w-14 md:w-16 h-14 md:h-16 rounded-full flex items-center justify-center shadow-xl transition " +
-      (inRoom && !isRoomOwner ? "opacity-40 cursor-not-allowed" : "hover:opacity-90")
-    }
-    style={{
-      background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
-      boxShadow: `0 0 80px ${theme.primary}aa`,
-    }}
-  >
-    {isPlaying ? <Pause size={30} /> : <Play size={30} />}
-  </button>
+                  {/* ▶ / ⏸ – room uses handleRoomPlayPause, local uses handlePlayPause */}
+                  <button
+                    onClick={inRoom ? handleRoomPlayPause : handlePlayPause}
+                    disabled={inRoom && !isRoomOwner}
+                    className={
+                      "w-14 md:w-16 h-14 md:h-16 rounded-full flex items-center justify-center shadow-xl transition " +
+                      (inRoom && !isRoomOwner
+                        ? "opacity-40 cursor-not-allowed"
+                        : "hover:opacity-90")
+                    }
+                    style={{
+                      background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
+                      boxShadow: `0 0 80px ${theme.primary}aa`,
+                    }}
+                  >
+                    {isPlaying ? <Pause size={30} /> : <Play size={30} />}
+                  </button>
 
-  {/* ⏭ NEXT */}
-  <button
-    onClick={canControlRoomPlayback ? playNext : undefined}
-    disabled={!canControlRoomPlayback}
-    className={
-      "transition-transform " +
-      (!canControlRoomPlayback
-        ? "text-gray-500 opacity-40 cursor-not-allowed"
-        : "text-gray-200 hover:scale-110")
-    }
-  >
-    <SkipForward />
-  </button>
-</div>
+                  {/* ⏭ NEXT */}
+                  <button
+                    onClick={canControlRoomPlayback ? playNext : undefined}
+                    disabled={!canControlRoomPlayback}
+                    className={
+                      "transition-transform " +
+                      (!canControlRoomPlayback
+                        ? "text-gray-500 opacity-40 cursor-not-allowed"
+                        : "text-gray-200 hover:scale-110")
+                    }
+                  >
+                    <SkipForward />
+                  </button>
+                </div>
 
                 {/* 🔔 Tap-to-join button for non-host room members */}
                 {inRoom && !isRoomOwner && needsRoomTap && (
@@ -3849,20 +4096,19 @@ useEffect(() => {
                         className="flex gap-3 animate-[fadeInUp_0.25s_ease-out] [animation-fill-mode:backwards]"
                       >
                         {/* Avatar */}
-  <div className="w-10 h-10 rounded-full overflow-hidden shadow-md bg-gradient-to-br from-pink-500 via-purple-500 to-cyan-500 flex items-center justify-center">
-    {c.avatar_url ? (
-      <img
-        src={c.avatar_url}
-        alt={c.name || "User"}
-        className="w-full h-full object-cover"
-      />
-    ) : (
-      <span className="font-bold text-sm">
-        {(c.name?.charAt(0) || "?").toUpperCase()}
-      </span>
-    )}
-  </div>
-
+                        <div className="w-10 h-10 rounded-full overflow-hidden shadow-md bg-gradient-to-br from-pink-500 via-purple-500 to-cyan-500 flex items-center justify-center">
+                          {c.avatar_url ? (
+                            <img
+                              src={c.avatar_url}
+                              alt={c.name || "User"}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <span className="font-bold text-sm">
+                              {(c.name?.charAt(0) || "?").toUpperCase()}
+                            </span>
+                          )}
+                        </div>
 
                         {/* Bubble */}
                         <div className="flex-1 bg-black/40 rounded-2xl px-4 py-3 border border-white/5 hover:bg-black/60 hover:border-cyan-400/30 transition-all duration-150">
@@ -3980,7 +4226,6 @@ useEffect(() => {
   );
 }
 
-
 // ---------- ROOT APP ----------
 export default function App() {
   const [user, setUser] = useState(null);
@@ -4003,7 +4248,7 @@ export default function App() {
           .from("profiles")
           .select("*")
           .eq("id", sessionUser.id)
-         .maybeSingle();
+          .maybeSingle();
 
         const appUser = {
           id: sessionUser.id,
@@ -4048,10 +4293,7 @@ export default function App() {
           const loggedUser = {
             id: u.id,
             email: u.email,
-            name:
-              profileRow?.name ||
-              u.user_metadata?.name ||
-              "Music Lover",
+            name: profileRow?.name || u.user_metadata?.name || "Music Lover",
             avatar: profileRow?.avatar_url || null,
           };
 
