@@ -1336,15 +1336,20 @@ const joinRoom = async (roomIdToJoin) => {
       (params.toString() ? "?" + params.toString() : "");
     window.history.replaceState({}, "", newUrl);
   };
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const id = params.get("room");
-    if (id) {
-      joinRoom(id);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+ // Call this whenever you want to auto-join from URL
+const checkUrlAndJoinRoom = useCallback(() => {
+  if (typeof window === "undefined") return;
+  const params = new URLSearchParams(window.location.search);
+  const roomIdFromUrl = params.get("room");
+  if (roomIdFromUrl && !inRoom) {
+    joinRoom(roomIdFromUrl);
+  }
+}, [inRoom]);
+
+// Run on mount AND when inRoom changes
+useEffect(() => {
+  checkUrlAndJoinRoom();
+}, [checkUrlAndJoinRoom]);
  const syncAudioWithRoom = useCallback(
   (room) => {
     setRoomState(room);
