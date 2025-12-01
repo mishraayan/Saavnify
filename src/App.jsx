@@ -1607,138 +1607,120 @@ function MusicApp({ user, onLogout }) {
       }, 500);
     }
 
-    function createPlayer() {
-      if (cancelled) return;
+   function createPlayer() {
+  if (cancelled) return;
 
-      playerInstance = new window.YT.Player("yt-player", {
-        videoId: currentTrack.id,
-        playerVars: {
-          autoplay: 1,
-          controls: 0,
-          rel: 0,
-          modestbranding: 1,
-          playsinline: 1, // ← YE DAAL
-          enablejsapi: 1, // ← YE BHI DAAL (already hai par confirm)
-          origin: window.location.origin,
-        },
-        events: {
-          onReady: (e) => {
-            if (cancelled) return;
-            ytPlayerRef.current = e.target;
-            if ("mediaSession" in navigator) {
-              navigator.mediaSession.metadata = new MediaMetadata({
-                title: currentTrack.title,
-                artist: currentTrack.singers || "YouTube",
-                artwork: [
-                  {
-                    src: currentTrack.image_url,
-                    sizes: "96x96",
-                    type: "image/jpeg",
-                  },
-                  {
-                    src: currentTrack.image_url,
-                    sizes: "128x128",
-                    type: "image/jpeg",
-                  },
-                  {
-                    src: currentTrack.image_url,
-                    sizes: "192x192",
-                    type: "image/jpeg",
-                  },
-                  {
-                    src: currentTrack.image_url,
-                    sizes: "256x256",
-                    type: "image/jpeg",
-                  },
-                  {
-                    src: currentTrack.image_url,
-                    sizes: "384x384",
-                    type: "image/jpeg",
-                  },
-                  {
-                    src: currentTrack.image_url,
-                    sizes: "512x512",
-                    type: "image/jpeg",
-                  },
-                ],
+  playerInstance = new window.YT.Player("yt-player", {
+    height: "100%",
+    width: "100%",
+    videoId: currentTrack.id,
+    playerVars: {
+      autoplay: 1,
+      controls: 0,              // hide controls
+      showinfo: 0,
+      rel: 0,
+      modestbranding: 1,
+      playsinline: 1,           // ← CRITICAL for mobile background
+      enablejsapi: 1,           // ← must for API control
+      origin: window.location.origin,
+      widget_referrer: window.location.origin,
+      iv_load_policy: 3,        // ← hide annotations
+      fs: 0,                    // disable fullscreen button
+      disablekb: 1,             // disable keyboard controls
+      wmode: "transparent",     // ← z-index fix
+      html5: 1,                 // ← force HTML5 player (important for background)
+      cc_load_policy: 0,
+      start: ytLastTime > 5 ? ytLastTime : 0,  // resume from last position
+    },
+    events: {
+      onReady: (e) => {
+        if (cancelled) return;
+
+        ytPlayerRef.current = e.target;
+
+        // Force play (sometimes needed in PWA)
+        e.target.playVideo();
+
+        setIsPlaying(true);
+        startProgressTimer(e.target);
+
+        // MediaSession API (lock screen controls + background survival)
+        if ("mediaSession" in navigator) {
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: currentTrack.title,
+            artist: currentTrack.singers || "YouTube",
+            artwork: [
+              { src: currentTrack.image_url, sizes: "512x512", type: "image/jpeg" },
+            ],
+          });
+
+          navigator.mediaSession.playbackState = "playing";
+
+          const updatePositionState = () => {
+            if (e.target.getDuration) {
+              navigator.mediaSession.setPositionState({
+                duration: e.target.getDuration(),
+                playbackRate: 1,
+                position: e.target.getCurrentTime(),
               });
-
-              navigator.mediaSession.setActionHandler("play", () =>
-                e.target.playVideo()
-              );
-              navigator.mediaSession.setActionHandler("pause", () =>
-                e.target.pauseVideo()
-              );
-              navigator.mediaSession.setActionHandler("previoustrack", () =>
-                playPrev?.()
-              );
-              navigator.mediaSession.setActionHandler("nexttrack", () =>
-                playNext?.()
-              );
-              navigator.mediaSession.setActionHandler("seekbackward", () =>
-                e.target.seekTo(e.target.getCurrentTime() - 10)
-              );
-              navigator.mediaSession.setActionHandler("seekforward", () =>
-                e.target.seekTo(e.target.getCurrentTime() + 10)
-              );
             }
+          };
 
-            if (ytLastTime > 0) {
-              try {
-                e.target.seekTo(ytLastTime, true);
-              } catch (err) {
-                console.warn("Failed to seek YT on resume", err);
-              }
-            }
+          navigator.mediaSession.setActionHandler("play", () => e.target.playVideo());
+          navigator.mediaSession.setActionHandler("pause", () => e.target.pauseVideo());
+          navigator.mediaSession.setActionHandler("previoustrack", playPrev);
+          navigator.mediaSession.setActionHandler("nexttrack", playNext);
+          navigator.mediaSession.setActionHandler("seekbackward", () => e.target.seekTo(e.target.getCurrentTime() - 10));
+          navigator.mediaSession.setActionHandler("seekforward", () => e.target.seekTo(e.target.getCurrentTime() + 10));
 
+          // Update position every 5 sec
+          setInterval(updatePositionState, 5000);
+        }
+
+        // CRITICAL TRICK: Keep YouTube player alive in background (PWA magic)
+        const keepAlive = setInterval(() => {
+          if (document.hidden && isPlaying) {
+            e.target.playVideo(); // fake activity
+          }
+        }, 25000); // every 25 sec
+
+        // Clean up on destroy
+        return () => clearInterval(keepAlive);
+      },
+
+      onStateChange: (e) => {
+        if (cancelled) return;
+
+        const state = e.data;
+
+        if (state === window.YT.PlayerState.PLAYING) {
+          setIsPlaying(true);
+          if ("mediaSession" in navigator) {
+            navigator.mediaSession.playbackState = "playing";
+          }
+        } else if (state === window.YT.PlayerState.PAUSED) {
+          setIsPlaying(false);
+          if ("mediaSession" in navigator) {
+            navigator.mediaSession.playbackState = "paused";
+          }
+        } else if (state === window.YT.PlayerState.ENDED) {
+          if (repeat) {
+            e.target.seekTo(0);
             e.target.playVideo();
-            setIsPlaying(true);
-            startProgressTimer(e.target);
-          },
-          onStateChange: (e) => {
-            if (cancelled) return;
+          } else {
+            playNext();
+          }
+        }
+      },
 
-            const state = e.data;
-
-            if (state === window.YT.PlayerState.PLAYING) {
-              setIsPlaying(true);
-
-              // 🔄 keep canvas in sync → play
-              if (ytCanvasRef.current) {
-                try {
-                  ytCanvasRef.current.playVideo();
-                } catch (ERR) {
-                  console.warn(ERR);
-                }
-              }
-            } else if (
-              state === window.YT.PlayerState.PAUSED ||
-              state === window.YT.PlayerState.ENDED
-            ) {
-              setIsPlaying(false);
-
-              // 🔄 keep canvas in sync → pause
-              if (ytCanvasRef.current) {
-                try {
-                  ytCanvasRef.current.pauseVideo();
-                } catch (ERR) {
-                  console.warn(ERR);
-                }
-              }
-            }
-
-            if (state === window.YT.PlayerState.ENDED) {
-              if (repeat) {
-                e.target.seekTo(0, true);
-                e.target.playVideo();
-              } else {
-                playNext();
-              }
-            }
-          },
-        },
-      });
-    }
+      onError: (e) => {
+        console.error("YT Player Error:", e.data);
+        // Optional: fallback to audio-only if possible
+        playNext(); // or show error toast
+      },
+    },
+  });
+}
 
     function onYouTubeIframeAPIReady() {
       if (cancelled) return;
