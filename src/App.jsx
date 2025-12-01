@@ -772,9 +772,14 @@ function NewPlaylistForm({ onCreate }) {
 function MusicApp({ user, onLogout }) {
   const [tracks, setTracks] = useState([]);
   const [library, setLibrary] = useState([]); // ❤️ liked songs
+  const audioRef = useRef(null);
+  const fadeIntervalRef = useRef(null);
+  const DEFAULT_VOLUME = 1;
   const [currentTrack, setCurrentTrack] = useState(null);
-  const [queue, setQueue] = useState([]);
   const [isPlaying, setIsPlaying] = useState(false);
+  const visualizerCanvasRef = useRef(null);
+  const miniVisualizerCanvasRef = useRef(null);
+  const [queue, setQueue] = useState([]);
   const [progress, setProgress] = useState(0);
   const [showPlayer, setShowPlayer] = useState(false);
   const [shuffle, setShuffle] = useState(false);
@@ -803,7 +808,6 @@ function MusicApp({ user, onLogout }) {
   const suggestionTimerRef = useRef(null);
   const skipNextSuggestionRef = useRef(false);
   const lastSuggestionQueryRef = useRef("");
-
   const ytPlayerRef = useRef(null);
   const [showCanvas, setShowCanvas] = useState(false);
   const ytCanvasRef = useRef(null);
@@ -827,12 +831,6 @@ function MusicApp({ user, onLogout }) {
     setAvatarUrl(user?.avatar || null);
     setProfileName(user?.name || "Music Lover");
   }, [user?.avatar, user?.name]);
-
-  const audioRef = useRef(null);
-  // 🎧 Web Audio visualizer
-  const visualizerCanvasRef = useRef(null);
-  const miniVisualizerCanvasRef = useRef(null);
-
 
   const trackKey = useCallback(
     (track) =>
@@ -1092,7 +1090,6 @@ function MusicApp({ user, onLogout }) {
     }
   };
 
-
   // Restore playback state on load
   // restore playback
   useEffect(() => {
@@ -1112,9 +1109,8 @@ function MusicApp({ user, onLogout }) {
         if (!audio) {
           audio = new Audio();
           audioRef.current = audio;
-          
         }
-        
+
         audio.src = state.currentTrack.url;
         audio.currentTime = state.currentTime || 0;
         setIsPlaying(false);
@@ -1520,9 +1516,8 @@ function MusicApp({ user, onLogout }) {
       if (!audio) {
         audio = new Audio();
         audioRef.current = audio;
-       
       }
- 
+
       if (room.current_track) {
         const track = room.current_track;
 
@@ -1627,9 +1622,9 @@ function MusicApp({ user, onLogout }) {
           playsinline: 1, // ← YE DAAL
           enablejsapi: 1, // ← YE BHI DAAL (already hai par confirm)
           origin: window.location.origin,
-          widget_referrer: window.location.origin,  // YE ADD KAR (PWA background ke liye)
-    html5: 1,  // YE ADD KAR (HTML5 mode force)
-    wmode: "transparent",  // YE ADD KAR (overlay issues fix)
+          widget_referrer: window.location.origin, // YE ADD KAR (PWA background ke liye)
+          html5: 1, // YE ADD KAR (HTML5 mode force)
+          wmode: "transparent", // YE ADD KAR (overlay issues fix)
         },
         events: {
           onReady: (e) => {
@@ -2485,7 +2480,94 @@ function MusicApp({ user, onLogout }) {
   const isRoomOwner =
     inRoom && roomState && user?.id && roomState.host_id === user.id;
   const canControlRoomPlayback = !inRoom || isRoomOwner;
-  // simple rule: only host can fully control playback when in a room
+  // Smooth fade helper for any HTMLAudioElement
+  function fadeAudio(audio, { from, to, duration }, onDone) {
+    if (!audio) {
+      onDone?.();
+      return;
+    }
+
+    // clear previous fade if active
+    if (fadeIntervalRef.current) {
+      clearInterval(fadeIntervalRef.current);
+      fadeIntervalRef.current = null;
+    }
+
+    const steps = 20;
+    const stepDuration = duration / steps;
+    const delta = (to - from) / steps;
+    let currentStep = 0;
+
+    audio.volume = from;
+
+    fadeIntervalRef.current = setInterval(() => {
+      currentStep++;
+
+      let nextVol = audio.volume + delta;
+      if (delta > 0) nextVol = Math.min(nextVol, to);
+      else nextVol = Math.max(nextVol, to);
+
+      audio.volume = Math.max(0, Math.min(1, nextVol));
+
+      if (currentStep >= steps) {
+        clearInterval(fadeIntervalRef.current);
+        fadeIntervalRef.current = null;
+        audio.volume = Math.max(0, Math.min(1, to));
+        onDone?.();
+      }
+    }, stepDuration);
+  }
+
+  // ⏭ Smooth NEXT (Saavn only, YT normal)
+  function handleSmoothNext() {
+    if (!canControlRoomPlayback) return;
+
+    if (isYouTube) {
+      // don’t try crossfade on YT
+      playNext?.();
+      return;
+    }
+
+    const audio = audioRef.current;
+    if (!audio) {
+      playNext?.();
+      return;
+    }
+
+    fadeAudio(
+      audio,
+      { from: audio.volume ?? DEFAULT_VOLUME, to: 0, duration: 500 },
+      () => {
+        audio.volume = DEFAULT_VOLUME;
+        playNext?.();
+      }
+    );
+  }
+
+  // ⏮ Smooth PREV (Saavn only, YT normal)
+  function handleSmoothPrev() {
+    if (!canControlRoomPlayback) return;
+
+    if (isYouTube) {
+      playPrev?.();
+      return;
+    }
+
+    const audio = audioRef.current;
+    if (!audio) {
+      playPrev?.();
+      return;
+    }
+
+    fadeAudio(
+      audio,
+      { from: audio.volume ?? DEFAULT_VOLUME, to: 0, duration: 500 },
+      () => {
+        audio.volume = DEFAULT_VOLUME;
+        playPrev?.();
+      }
+    );
+  }
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2686,10 +2768,8 @@ function MusicApp({ user, onLogout }) {
       if (!audio) {
         audio = new Audio();
         audioRef.current = audio;
-       
       }
-            
-      
+
       setCurrentTrack(track);
       setShowPlayer(true);
       audio.src = track.url;
@@ -3175,308 +3255,290 @@ function MusicApp({ user, onLogout }) {
   };
 
   const theme = getThemeForTrack(currentTrack);
-// 🎨 Premium neon visualizer with reflection (optimized)
-useEffect(() => {
-  const canvas = visualizerCanvasRef.current;
-  if (!showPlayer || !canvas) return;
+  // 🎨 Premium neon visualizer with reflection (optimized)
+  useEffect(() => {
+    const canvas = visualizerCanvasRef.current;
+    if (!showPlayer || !canvas) return;
 
-  const ctx = canvas.getContext("2d");
-  let frameId;
-  let phase = 0;
-  let lastTime = 0;
-  let prevW = -1;
-  let prevH = -1;
-  let prevDpr = -1;
+    const ctx = canvas.getContext("2d");
+    let frameId;
+    let phase = 0;
+    let lastTime = 0;
+    let prevW = -1;
+    let prevH = -1;
+    let prevDpr = -1;
 
-  const render = (time = 0, loop = false) => {
-    if (loop) {
+    const render = (time = 0, loop = false) => {
+      if (loop) {
+        frameId = requestAnimationFrame((t) => render(t, true));
+      }
+
+      // ~30 FPS cap
+      if (loop) {
+        const fpsInterval = 1000 / 30;
+        if (time - lastTime < fpsInterval) return;
+        lastTime = time;
+      }
+
+      const rect = canvas.getBoundingClientRect();
+      const width = rect.width || 0;
+      const height = rect.height || 0;
+      if (!width || !height) return;
+
+      const dpr = window.devicePixelRatio || 1;
+
+      // only resize if changed (cheaper)
+      if (width !== prevW || height !== prevH || dpr !== prevDpr) {
+        prevW = width;
+        prevH = height;
+        prevDpr = dpr;
+        canvas.width = width * dpr;
+        canvas.height = height * dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      } else {
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+
+      // ----- background + glow -----
+      ctx.clearRect(0, 0, width, height);
+
+      // dark base
+      ctx.fillStyle = "rgba(0,0,0,0.9)";
+      ctx.fillRect(0, 0, width, height);
+
+      // soft radial glow behind bars
+      const glow = ctx.createRadialGradient(
+        width / 2,
+        height * 0.6,
+        height * 0.1,
+        width / 2,
+        height * 0.6,
+        height * 0.9
+      );
+      glow.addColorStop(0, `${theme.secondary}33`);
+      glow.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, width, height);
+
+      const barCount = 32; // was 48 – lighter but still dense
+      const gap = 2;
+      const barWidth = (width - gap * (barCount - 1)) / barCount;
+
+      const baseY = height * 0.62;
+      const maxMainHeight = height * 0.5;
+      const maxReflectHeight = height * 0.24;
+
+      const barGrad = ctx.createLinearGradient(
+        0,
+        baseY - maxMainHeight,
+        0,
+        baseY
+      );
+      barGrad.addColorStop(0, theme.secondary);
+      barGrad.addColorStop(1, theme.primary);
+
+      for (let i = 0; i < barCount; i++) {
+        const tNorm = i / (barCount - 1);
+
+        const envelope = Math.sin(Math.PI * tNorm) ** 0.9;
+
+        const wave1 = (Math.sin(phase + i * 0.28) + 1) / 2;
+        const wave2 = (Math.sin(phase * 0.6 + i * 0.14 + 1.3) + 1) / 2;
+
+        const base = (wave1 * 0.7 + wave2 * 0.3) * envelope;
+        const randomPulse = (Math.sin(phase * 2 + i * 0.5) + 1) * 0.02;
+        const value = Math.min(1, base + randomPulse);
+
+        const mainHeight = value * maxMainHeight;
+        const reflectHeight = value * maxReflectHeight;
+
+        const x = i * (barWidth + gap);
+        const topY = baseY - mainHeight;
+        const radius = Math.min(8, barWidth / 2);
+
+        // ----- soft shadow behind main bar -----
+        ctx.globalAlpha = 0.3;
+        ctx.fillStyle = theme.primary;
+        ctx.beginPath();
+        ctx.moveTo(x, baseY + 3);
+        ctx.lineTo(x, topY - 3);
+        ctx.lineTo(x + barWidth, topY - 3);
+        ctx.lineTo(x + barWidth, baseY + 3);
+        ctx.closePath();
+        ctx.fill();
+
+        // ----- main bar (rounded, gradient) -----
+        ctx.globalAlpha = 0.95;
+        ctx.fillStyle = barGrad;
+        ctx.beginPath();
+        ctx.moveTo(x, baseY);
+        ctx.lineTo(x, topY + radius);
+        ctx.quadraticCurveTo(x, topY, x + radius, topY);
+        ctx.lineTo(x + barWidth - radius, topY);
+        ctx.quadraticCurveTo(x + barWidth, topY, x + barWidth, topY + radius);
+        ctx.lineTo(x + barWidth, baseY);
+        ctx.closePath();
+        ctx.fill();
+
+        // ----- highlight at the top cap -----
+        ctx.globalAlpha = 0.7;
+        ctx.beginPath();
+        ctx.arc(
+          x + barWidth / 2,
+          topY + radius * 0.3,
+          barWidth * 0.2,
+          0,
+          Math.PI * 2
+        );
+        ctx.fillStyle = "rgba(255,255,255,0.5)";
+        ctx.fill();
+
+        // ----- reflection (no blur, just gradient) -----
+        if (reflectHeight > 2) {
+          const refTop = baseY;
+          const refBottom = baseY + reflectHeight;
+
+          const refGrad = ctx.createLinearGradient(0, refTop, 0, refBottom);
+          refGrad.addColorStop(0, `${theme.primary}AA`);
+          refGrad.addColorStop(1, "rgba(0,0,0,0)");
+
+          ctx.globalAlpha = 0.25;
+          ctx.fillStyle = refGrad;
+          ctx.beginPath();
+          ctx.moveTo(x, refTop);
+          ctx.lineTo(x, refBottom);
+          ctx.lineTo(x + barWidth, refBottom);
+          ctx.lineTo(x + barWidth, refTop);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
+
+      // update phase only if looping (playing)
+      if (loop) {
+        const speed = 0.12; // fixed speed for playing
+        phase += speed;
+      }
+    };
+
+    // draw once (paused OR initial)
+    render(0, false);
+
+    // if playing, start animation loop
+    if (isPlaying) {
       frameId = requestAnimationFrame((t) => render(t, true));
     }
 
-    // ~30 FPS cap
-    if (loop) {
-      const fpsInterval = 1000 / 30;
-      if (time - lastTime < fpsInterval) return;
-      lastTime = time;
-    }
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+    };
+  }, [isPlaying, theme.primary, theme.secondary, showPlayer]);
 
-    const rect = canvas.getBoundingClientRect();
-    const width = rect.width || 0;
-    const height = rect.height || 0;
-    if (!width || !height) return;
+  // 🎛️ MINI PLAYER VISUALIZER STRIP (polished)
+  useEffect(() => {
+    const canvas = miniVisualizerCanvasRef.current;
 
-    const dpr = window.devicePixelRatio || 1;
+    // only run when mini player is visible and a track exists
+    if (!canvas || showPlayer || !currentTrack) return;
 
-    // only resize if changed (cheaper)
-    if (width !== prevW || height !== prevH || dpr !== prevDpr) {
-      prevW = width;
-      prevH = height;
-      prevDpr = dpr;
+    const ctx = canvas.getContext("2d");
+    let frameId;
+    let phase = 0;
+
+    const render = () => {
+      frameId = requestAnimationFrame(render);
+
+      const rect = canvas.getBoundingClientRect();
+      const width = rect.width || 0;
+      const height = rect.height || 0;
+      if (!width || !height) return;
+
+      const dpr = window.devicePixelRatio || 1;
       canvas.width = width * dpr;
       canvas.height = height * dpr;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    } else {
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
 
-    // ----- background + glow -----
-    ctx.clearRect(0, 0, width, height);
+      // background inside pill
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = "rgba(0,0,0,0.75)";
+      ctx.fillRect(0, 0, width, height);
 
-    // dark base
-    ctx.fillStyle = "rgba(0,0,0,0.9)";
-    ctx.fillRect(0, 0, width, height);
+      const barCount = 16;
+      const gap = 1;
+      const barWidth = (width - gap * (barCount - 1)) / barCount;
+      const maxHeight = height * 0.9;
+      const baseY = height * 0.95;
 
-    // soft radial glow behind bars
-    const glow = ctx.createRadialGradient(
-      width / 2,
-      height * 0.6,
-      height * 0.1,
-      width / 2,
-      height * 0.6,
-      height * 0.9
-    );
-    glow.addColorStop(0, `${theme.secondary}33`);
-    glow.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = glow;
-    ctx.fillRect(0, 0, width, height);
+      // gradient across bars
+      const grad = ctx.createLinearGradient(0, 0, width, 0);
+      grad.addColorStop(0, theme.primary);
+      grad.addColorStop(1, theme.secondary);
 
-    const barCount = 32; // was 48 – lighter but still dense
-    const gap = 2;
-    const barWidth = (width - gap * (barCount - 1)) / barCount;
+      for (let i = 0; i < barCount; i++) {
+        const t = i / (barCount - 1); // 0..1
+        const envelope = Math.sin(Math.PI * t) ** 0.85; // smoother center bump
 
-    const baseY = height * 0.62;
-    const maxMainHeight = height * 0.5;
-    const maxReflectHeight = height * 0.24;
+        const wave1 = (Math.sin(phase + i * 0.42) + 1) / 2;
+        const wave2 = (Math.sin(phase * 0.65 + i * 0.22 + 1.4) + 1) / 2;
 
-    const barGrad = ctx.createLinearGradient(
-      0,
-      baseY - maxMainHeight,
-      0,
-      baseY
-    );
-    barGrad.addColorStop(0, theme.secondary);
-    barGrad.addColorStop(1, theme.primary);
+        const base = (wave1 * 0.7 + wave2 * 0.3) * envelope;
+        const random = (Math.sin(phase * 1.9 + i * 0.75) + 1) * 0.02;
+        const value = Math.min(1, base + random);
 
-    for (let i = 0; i < barCount; i++) {
-      const tNorm = i / (barCount - 1);
+        const barHeight = value * maxHeight;
+        const x = i * (barWidth + gap);
+        const topY = baseY - barHeight;
+        const radius = Math.min(4, barWidth / 2);
 
-      const envelope = Math.sin(Math.PI * tNorm) ** 0.9;
-
-      const wave1 = (Math.sin(phase + i * 0.28) + 1) / 2;
-      const wave2 = (Math.sin(phase * 0.6 + i * 0.14 + 1.3) + 1) / 2;
-
-      const base = (wave1 * 0.7 + wave2 * 0.3) * envelope;
-      const randomPulse = (Math.sin(phase * 2 + i * 0.5) + 1) * 0.02;
-      const value = Math.min(1, base + randomPulse);
-
-      const mainHeight = value * maxMainHeight;
-      const reflectHeight = value * maxReflectHeight;
-
-      const x = i * (barWidth + gap);
-      const topY = baseY - mainHeight;
-      const radius = Math.min(8, barWidth / 2);
-
-      // ----- soft shadow behind main bar -----
-      ctx.globalAlpha = 0.3;
-      ctx.fillStyle = theme.primary;
-      ctx.beginPath();
-      ctx.moveTo(x, baseY + 3);
-      ctx.lineTo(x, topY - 3);
-      ctx.lineTo(x + barWidth, topY - 3);
-      ctx.lineTo(x + barWidth, baseY + 3);
-      ctx.closePath();
-      ctx.fill();
-
-      // ----- main bar (rounded, gradient) -----
-      ctx.globalAlpha = 0.95;
-      ctx.fillStyle = barGrad;
-      ctx.beginPath();
-      ctx.moveTo(x, baseY);
-      ctx.lineTo(x, topY + radius);
-      ctx.quadraticCurveTo(x, topY, x + radius, topY);
-      ctx.lineTo(x + barWidth - radius, topY);
-      ctx.quadraticCurveTo(
-        x + barWidth,
-        topY,
-        x + barWidth,
-        topY + radius
-      );
-      ctx.lineTo(x + barWidth, baseY);
-      ctx.closePath();
-      ctx.fill();
-
-      // ----- highlight at the top cap -----
-      ctx.globalAlpha = 0.7;
-      ctx.beginPath();
-      ctx.arc(
-        x + barWidth / 2,
-        topY + radius * 0.3,
-        barWidth * 0.2,
-        0,
-        Math.PI * 2
-      );
-      ctx.fillStyle = "rgba(255,255,255,0.5)";
-      ctx.fill();
-
-      // ----- reflection (no blur, just gradient) -----
-      if (reflectHeight > 2) {
-        const refTop = baseY;
-        const refBottom = baseY + reflectHeight;
-
-        const refGrad = ctx.createLinearGradient(
-          0,
-          refTop,
-          0,
-          refBottom
-        );
-        refGrad.addColorStop(0, `${theme.primary}AA`);
-        refGrad.addColorStop(1, "rgba(0,0,0,0)");
-
-        ctx.globalAlpha = 0.25;
-        ctx.fillStyle = refGrad;
+        // soft glow bar behind
+        ctx.globalAlpha = 0.35;
+        ctx.fillStyle = theme.primary;
         ctx.beginPath();
-        ctx.moveTo(x, refTop);
-        ctx.lineTo(x, refBottom);
-        ctx.lineTo(x + barWidth, refBottom);
-        ctx.lineTo(x + barWidth, refTop);
+        ctx.moveTo(x, baseY);
+        ctx.lineTo(x, topY - 3);
+        ctx.lineTo(x + barWidth, topY - 3);
+        ctx.lineTo(x + barWidth, baseY);
         ctx.closePath();
         ctx.fill();
+
+        // main bar
+        ctx.globalAlpha = 0.95;
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.moveTo(x, baseY);
+        ctx.lineTo(x, topY + radius);
+        ctx.quadraticCurveTo(x, topY, x + radius, topY);
+        ctx.lineTo(x + barWidth - radius, topY);
+        ctx.quadraticCurveTo(x + barWidth, topY, x + barWidth, topY + radius);
+        ctx.lineTo(x + barWidth, baseY);
+        ctx.closePath();
+        ctx.fill();
+
+        // subtle highlight cap
+        ctx.globalAlpha = 0.7;
+        ctx.beginPath();
+        ctx.arc(
+          x + barWidth / 2,
+          topY + radius * 0.35,
+          barWidth * 0.18,
+          0,
+          Math.PI * 2
+        );
+        ctx.fillStyle = "rgba(255,255,255,0.45)";
+        ctx.fill();
       }
-    }
 
-    // update phase only if looping (playing)
-    if (loop) {
-      const speed = 0.12; // fixed speed for playing
+      // speed: a bit faster when playing, very calm when paused
+      const speed = isPlaying ? 0.16 : 0.045;
       phase += speed;
-    }
-  };
+    };
 
-  // draw once (paused OR initial)
-  render(0, false);
+    render();
 
-  // if playing, start animation loop
-  if (isPlaying) {
-    frameId = requestAnimationFrame((t) => render(t, true));
-  }
-
-  return () => {
-    if (frameId) cancelAnimationFrame(frameId);
-  };
-}, [isPlaying, theme.primary, theme.secondary, showPlayer]);
-
-// 🎛️ MINI PLAYER VISUALIZER STRIP (polished)
-useEffect(() => {
-  const canvas = miniVisualizerCanvasRef.current;
-
-  // only run when mini player is visible and a track exists
-  if (!canvas || showPlayer || !currentTrack ) return;
-
-  const ctx = canvas.getContext("2d");
-  let frameId;
-  let phase = 0;
-
-  const render = () => {
-    frameId = requestAnimationFrame(render);
-
-    const rect = canvas.getBoundingClientRect();
-    const width = rect.width || 0;
-    const height = rect.height || 0;
-    if (!width || !height) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    // background inside pill
-    ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = "rgba(0,0,0,0.75)";
-    ctx.fillRect(0, 0, width, height);
-
-    const barCount = 16;
-    const gap = 1;
-    const barWidth = (width - gap * (barCount - 1)) / barCount;
-    const maxHeight = height * 0.9;
-    const baseY = height * 0.95;
-
-    // gradient across bars
-    const grad = ctx.createLinearGradient(0, 0, width, 0);
-    grad.addColorStop(0, theme.primary);
-    grad.addColorStop(1, theme.secondary);
-
-    for (let i = 0; i < barCount; i++) {
-      const t = i / (barCount - 1); // 0..1
-      const envelope = Math.sin(Math.PI * t) ** 0.85; // smoother center bump
-
-      const wave1 = (Math.sin(phase + i * 0.42) + 1) / 2;
-      const wave2 = (Math.sin(phase * 0.65 + i * 0.22 + 1.4) + 1) / 2;
-
-      const base = (wave1 * 0.7 + wave2 * 0.3) * envelope;
-      const random = (Math.sin(phase * 1.9 + i * 0.75) + 1) * 0.02;
-      const value = Math.min(1, base + random);
-
-      const barHeight = value * maxHeight;
-      const x = i * (barWidth + gap);
-      const topY = baseY - barHeight;
-      const radius = Math.min(4, barWidth / 2);
-
-      // soft glow bar behind
-      ctx.globalAlpha = 0.35;
-      ctx.fillStyle = theme.primary;
-      ctx.beginPath();
-      ctx.moveTo(x, baseY);
-      ctx.lineTo(x, topY - 3);
-      ctx.lineTo(x + barWidth, topY - 3);
-      ctx.lineTo(x + barWidth, baseY);
-      ctx.closePath();
-      ctx.fill();
-
-      // main bar
-      ctx.globalAlpha = 0.95;
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.moveTo(x, baseY);
-      ctx.lineTo(x, topY + radius);
-      ctx.quadraticCurveTo(x, topY, x + radius, topY);
-      ctx.lineTo(x + barWidth - radius, topY);
-      ctx.quadraticCurveTo(
-        x + barWidth,
-        topY,
-        x + barWidth,
-        topY + radius
-      );
-      ctx.lineTo(x + barWidth, baseY);
-      ctx.closePath();
-      ctx.fill();
-
-      // subtle highlight cap
-      ctx.globalAlpha = 0.7;
-      ctx.beginPath();
-      ctx.arc(
-        x + barWidth / 2,
-        topY + radius * 0.35,
-        barWidth * 0.18,
-        0,
-        Math.PI * 2
-      );
-      ctx.fillStyle = "rgba(255,255,255,0.45)";
-      ctx.fill();
-    }
-
-    // speed: a bit faster when playing, very calm when paused
-    const speed = isPlaying ? 0.16 : 0.045;
-    phase += speed;
-  };
-
-  render();
-
-  return () => {
-    if (frameId) cancelAnimationFrame(frameId);
-  };
-}, [isPlaying, theme.primary, theme.secondary, showPlayer, currentTrack]);
-
-
-
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+    };
+  }, [isPlaying, theme.primary, theme.secondary, showPlayer, currentTrack]);
 
   // ---------- QUEUE (UP NEXT) ----------
   let upNext = [];
@@ -3869,11 +3931,11 @@ useEffect(() => {
             </div>
           )}
 
-         {/* MINI PLAYER (BOTTOM) */}
-{currentTrack && !(activeTab === "account" && isMobile) && (
-  <div className="fixed bottom-14 md:bottom-4 left-1/2 -translate-x-1/2 w-[96%] md:w-[70%] lg:w-[55%] z-40">
-    <div
-      className="
+          {/* MINI PLAYER (BOTTOM) */}
+          {currentTrack && !(activeTab === "account" && isMobile) && (
+            <div className="fixed bottom-14 md:bottom-4 left-1/2 -translate-x-1/2 w-[96%] md:w-[70%] lg:w-[55%] z-40">
+              <div
+                className="
         relative w-full
         bg-white/10
         backdrop-blur-xl
@@ -3883,91 +3945,93 @@ useEffect(() => {
         overflow-hidden
         px-4 py-3
       "
-    >
-      {/* 🔊 VISUALIZER BACKGROUND */}
-      <canvas
-        ref={miniVisualizerCanvasRef}
-        className="absolute inset-0 w-full h-full opacity-40 pointer-events-none"
-      />
+              >
+                {/* 🔊 VISUALIZER BACKGROUND */}
+                <canvas
+                  ref={miniVisualizerCanvasRef}
+                  className="absolute inset-0 w-full h-full opacity-40 pointer-events-none"
+                />
 
-      {/* FOREGROUND CONTENT */}
-      <div className="relative flex items-center justify-between gap-3">
-        <div
-          className="flex items-center gap-3 cursor-pointer"
-          onClick={() => setShowPlayer(true)}
-        >
-          <img
-            src={currentTrack.image_url}
-            alt={currentTrack.title}
-            className="w-10 h-10 md:w-12 md:h-12 rounded-2xl object-cover"
-          />
-          <div className="max-w-[140px] sm:max-w-[220px]">
-            <p className="text-xs md:text-sm font-semibold truncate">
-              {currentTrack.title}
-            </p>
-            <p className="text-[11px] md:text-xs text-gray-300 truncate">
-              {currentTrack.singers}
-            </p>
-            <div className="mt-1 w-full h-1 bg-white/20 rounded-full overflow-hidden">
-              <div
-                className="h-full"
-                style={{
-                  width: `${progress}%`,
-                  background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
-                }}
-              />
+                {/* FOREGROUND CONTENT */}
+                <div className="relative flex items-center justify-between gap-3">
+                  <div
+                    className="flex items-center gap-3 cursor-pointer"
+                    onClick={() => setShowPlayer(true)}
+                  >
+                    <img
+                      src={currentTrack.image_url}
+                      alt={currentTrack.title}
+                      className="w-10 h-10 md:w-12 md:h-12 rounded-2xl object-cover"
+                    />
+                    <div className="max-w-[140px] sm:max-w-[220px]">
+                      <p className="text-xs md:text-sm font-semibold truncate">
+                        {currentTrack.title}
+                      </p>
+                      <p className="text-[11px] md:text-xs text-gray-300 truncate">
+                        {currentTrack.singers}
+                      </p>
+                      <div className="mt-1 w-full h-1 bg-white/20 rounded-full overflow-hidden">
+                        <div
+                          className="h-full"
+                          style={{
+                            width: `${progress}%`,
+                            background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 sm:gap-4">
+                    {/* ⏮ PREV */}
+                    <button
+                      onClick={
+                        canControlRoomPlayback ? handleSmoothPrev : undefined
+                      }
+                      disabled={!canControlRoomPlayback}
+                      className={`text-gray-200 ${
+                        !canControlRoomPlayback
+                          ? "opacity-40 cursor-not-allowed"
+                          : "hover:scale-110 transition-transform"
+                      }`}
+                    >
+                      <SkipBack size={18} />
+                    </button>
+                    {/* ▶ / ⏸ */}
+                    <button
+                      onClick={inRoom ? handleRoomPlayPause : handlePlayPause}
+                      disabled={inRoom && !isRoomOwner}
+                      className={`w-9 h-9 rounded-full flex items-center justify-center ${
+                        inRoom && !isRoomOwner
+                          ? "opacity-40 cursor-not-allowed"
+                          : "hover:opacity-90"
+                      }`}
+                      style={{
+                        background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
+                      }}
+                    >
+                      {isPlaying ? <Pause size={18} /> : <Play size={18} />}
+                    </button>
+
+                    {/* ⏭ NEXT */}
+                    <button
+                      onClick={
+                        canControlRoomPlayback ? handleSmoothNext : undefined
+                      }
+                      disabled={!canControlRoomPlayback}
+                      className={`text-gray-200 ${
+                        !canControlRoomPlayback
+                          ? "opacity-40 cursor-not-allowed"
+                          : "hover:scale-110 transition-transform"
+                      }`}
+                    >
+                      <SkipForward size={18} />
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 sm:gap-4">
-          {/* ⏮ PREV */}
-          <button
-            onClick={canControlRoomPlayback ? playPrev : undefined}
-            disabled={!canControlRoomPlayback}
-            className={`text-gray-200 ${
-              !canControlRoomPlayback
-                ? "opacity-40 cursor-not-allowed"
-                : "hover:scale-110 transition-transform"
-            }`}
-          >
-            <SkipBack size={18} />
-          </button>
-
-          {/* ▶ / ⏸ */}
-          <button
-            onClick={inRoom ? handleRoomPlayPause : handlePlayPause}
-            disabled={inRoom && !isRoomOwner}
-            className={`w-9 h-9 rounded-full flex items-center justify-center ${
-              inRoom && !isRoomOwner
-                ? "opacity-40 cursor-not-allowed"
-                : "hover:opacity-90"
-            }`}
-            style={{
-              background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
-            }}
-          >
-            {isPlaying ? <Pause size={18} /> : <Play size={18} />}
-          </button>
-
-          {/* ⏭ NEXT */}
-          <button
-            onClick={canControlRoomPlayback ? playNext : undefined}
-            disabled={!canControlRoomPlayback}
-            className={`text-gray-200 ${
-              !canControlRoomPlayback
-                ? "opacity-40 cursor-not-allowed"
-                : "hover:scale-110 transition-transform"
-            }`}
-          >
-            <SkipForward size={18} />
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-)}
-
+          )}
 
           {/* MOBILE BOTTOM NAV */}
           <nav className="md:hidden fixed bottom-0 inset-x-0 bg-black/80 border-t border-white/10 backdrop-blur-xl flex justify-around py-2 text-xs">
@@ -4268,13 +4332,11 @@ useEffect(() => {
                   }}
                 />
               </div>
-                          {/* 🎧 Premium visualizer (works for Saavn + YT) */}
-<canvas
-  ref={visualizerCanvasRef}
-  className="mt-5 w-64 md:w-80 h-28 rounded-3xl bg-black/60 border border-white/10 shadow-[0_0_40px_rgba(0,0,0,0.9)]"
-/>
-              
-
+              {/* 🎧 Premium visualizer (works for Saavn + YT) */}
+              <canvas
+                ref={visualizerCanvasRef}
+                className="mt-5 w-64 md:w-80 h-28 rounded-3xl bg-black/60 border border-white/10 shadow-[0_0_40px_rgba(0,0,0,0.9)]"
+              />
 
               {/* CONTROLS FIRST */}
               <div
@@ -4288,7 +4350,9 @@ useEffect(() => {
                 <div className="flex items-center justify-center gap-6 text-2xl md:text-3xl">
                   {/* ⏮ PREV */}
                   <button
-                    onClick={canControlRoomPlayback ? playPrev : undefined}
+                    onClick={
+                      canControlRoomPlayback ? handleSmoothPrev : undefined
+                    }
                     disabled={!canControlRoomPlayback}
                     className={
                       "transition-transform " +
@@ -4320,7 +4384,9 @@ useEffect(() => {
 
                   {/* ⏭ NEXT */}
                   <button
-                    onClick={canControlRoomPlayback ? playNext : undefined}
+                    onClick={
+                      canControlRoomPlayback ? handleSmoothNext : undefined
+                    }
                     disabled={!canControlRoomPlayback}
                     className={
                       "transition-transform " +
