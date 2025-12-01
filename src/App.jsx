@@ -2807,16 +2807,35 @@ function MusicApp({ user, onLogout }) {
         setShowPlayer(true);
         setIsPlaying(false);
 
-        // Queue
-        setQueue((prev) => {
-          if (listContext && listContext.length) {
-            const others = listContext.filter((t) => t.id !== track.id);
-            return [track, ...others];
-          }
-          const base = prev.length ? prev : tracks;
-          const others = base.filter((t) => t.id !== track.id);
-          return [track, ...others];
-        });
+        
+       // Queue
+setQueue((prev) => {
+  // 🟣 1) User clicked a song from a list (home / search / playlist)
+  // listContext contains the full list → build queue from that list
+  if (listContext && listContext.length) {
+    const others = listContext.filter((t) => t.id !== track.id);
+    return [track, ...others];
+  }
+
+  const safePrev = Array.isArray(prev) ? prev : [];
+
+  // 🟢 2) Called from playNext / playPrev / Auto DJ with NO listContext:
+  // If the track is already in the existing queue, DON'T reorder it.
+  if (safePrev.length && safePrev.some((t) => t.id === track.id)) {
+    return safePrev;
+  }
+
+  // 🟡 3) Fallback: if prev is empty, build a minimal queue from tracks
+  const base = safePrev.length ? safePrev : tracks || [];
+  if (base.length) {
+    const others = base.filter((t) => t.id !== track.id);
+    return [track, ...others];
+  }
+
+  // last-resort: just this one track
+  return [track];
+});
+
 
         return;
       }
@@ -2923,15 +2942,32 @@ function MusicApp({ user, onLogout }) {
           setIsPlaying(false);
         });
 
-      setQueue((prev) => {
-        if (listContext && listContext.length) {
-          const others = listContext.filter((t) => t.id !== track.id);
-          return [track, ...others];
-        }
-        const base = prev.length ? prev : tracks;
-        const others = base.filter((t) => t.id !== track.id);
-        return [track, ...others];
-      });
+     setQueue((prev) => {
+  // 🟣 1) User clicked a song from a list (home / search / playlist)
+  // listContext contains the full list → build queue from that list
+  if (listContext && listContext.length) {
+    const others = listContext.filter((t) => t.id !== track.id);
+    return [track, ...others];
+  }
+
+  // 🟢 2) Called from playNext / playPrev / Auto DJ with NO listContext:
+  // If the track is already in the existing queue, DON'T reorder it.
+  if (prev && prev.length && prev.some((t) => t.id === track.id)) {
+    return prev;
+  }
+
+  // 🟡 3) Fallback: if for some reason prev is empty
+  // build a minimal queue from tracks or just the single track
+  const base = prev && prev.length ? prev : tracks;
+  if (base && base.length) {
+    const others = base.filter((t) => t.id !== track.id);
+    return [track, ...others];
+  }
+
+  // last-resort: just this one track
+  return [track];
+});
+
     },
     [
       inRoom,
@@ -2944,22 +2980,183 @@ function MusicApp({ user, onLogout }) {
       user?.id,
     ]
   );
+function pickAutoDjNextTrack() {
+  if (!currentTrack) return null;
 
-  const playNext = useCallback(() => {
-    if (!queue.length) return;
+  const currentKey = trackKey(currentTrack);
+  if (!currentKey) return null;
 
-    let next;
+  const poolMap = new Map();
+
+  const pushCandidate = (t) => {
+    if (!t) return;
+    // ignore YouTube tracks for Auto DJ (radio = Saavn only)
+    if (t.source === "yt" || t.source === "youtube") return;
+
+    const key = trackKey(t);
+    if (!key || key === currentKey) return; // don't re-pick same song
+    if (!poolMap.has(key)) {
+      poolMap.set(key, t);
+    }
+  };
+
+  // 1️⃣ Liked songs
+  (library || []).forEach(pushCandidate);
+
+  // 2️⃣ Playlist tracks
+  (playlists || []).forEach((pl) => {
+    (pl.tracks || []).forEach(pushCandidate);
+  });
+
+  // 3️⃣ Current search / home results
+  (tracks || []).forEach(pushCandidate);
+
+  // 4️⃣ 🔥 Also include current queue (important for search-based sessions)
+  (queue || []).forEach(pushCandidate);
+
+  const candidates = Array.from(poolMap.values());
+  if (!candidates.length) {
+    console.log("Auto DJ: pool is empty (no candidates).");
+    return null;
+  }
+
+  const baseTitleWords = (currentTrack.title || "")
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length > 2);
+  const baseArtist = (currentTrack.singers || "").toLowerCase();
+  const baseSource = currentTrack.source || "saavn";
+
+  const scored = candidates.map((t) => {
+    let score = 0;
+    const title = (t.title || "").toLowerCase();
+    const singers = (t.singers || "").toLowerCase();
+    const source = t.source || "saavn";
+    const key = trackKey(t);
+
+    // same artist
+    if (singers && baseArtist) {
+      if (singers === baseArtist) score += 6;
+      else if (
+        singers.includes(baseArtist) ||
+        baseArtist.includes(singers)
+      ) {
+        score += 4;
+      }
+    }
+
+    // title overlap
+    const words = title.split(/\s+/);
+    const overlap = words.filter((w) => baseTitleWords.includes(w));
+    score += overlap.length;
+
+    // same source
+    if (source === baseSource) score += 2;
+
+    // small bonus if not already in queue (prefer “new” inside pool)
+    const inQueue =
+      (queue || []).some((qt) => trackKey(qt) === key);
+    if (!inQueue) score += 1;
+
+    // randomness
+    score += Math.random() * 2;
+
+    return { track: t, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+
+  const picked = scored[0]?.track || null;
+  if (picked) {
+    console.log(
+      "🎧 Auto DJ picked:",
+      picked.title,
+      "-",
+      picked.singers,
+      "(pool size:",
+      candidates.length,
+      ")"
+    );
+  } else {
+    console.log("Auto DJ: scoring failed.");
+  }
+
+  return picked;
+}
+
+
+
+ const playNext = useCallback(() => {
+  let next = null;
+
+  // 1️⃣ Try normal queue logic first
+  if (queue.length) {
     if (shuffle && queue.length > 1) {
       const randomIndex = Math.floor(Math.random() * queue.length);
       next = queue[randomIndex];
     } else {
-      const currentIndex = queue.findIndex((t) => t.id === currentTrack?.id);
-      const nextIndex = currentIndex === -1 ? 1 : currentIndex + 1;
-      next = queue[nextIndex];
-    }
+      const currentKey = currentTrack ? trackKey(currentTrack) : null;
 
-    if (next) openPlayer(next);
-  }, [queue, shuffle, currentTrack, openPlayer]);
+      const currentIndex =
+        currentKey == null
+          ? -1
+          : queue.findIndex((t) => trackKey(t) === currentKey);
+
+      const nextIndex = currentIndex === -1 ? 1 : currentIndex + 1;
+      next = queue[nextIndex] || null;
+    }
+  }
+
+  // If we found a next track in queue → just play it
+  if (next) {
+    openPlayer(next);
+    return;
+  }
+
+  // 2️⃣ Queue ended → Auto DJ kicks in (local Saavn only)
+  if (!currentTrack) return;
+  if (isYouTube) return;      // don't Auto DJ YouTube
+  if (inRoom) return;         // rooms handled via Supabase queue
+
+  console.log("🔥 Auto DJ triggered – no next in queue");
+
+  const djTrack = pickAutoDjNextTrack();
+  if (!djTrack) {
+    console.log("Auto DJ: No candidate found.");
+    return;
+  }
+
+  console.log("🎧 Auto DJ selected:", djTrack.title, "-", djTrack.singers);
+
+  // Play the Auto DJ choice
+  openPlayer(djTrack);
+
+  // Refresh local queue so radio keeps feeling endless
+  setQueue((prev) => {
+    const currentKey = currentTrack ? trackKey(currentTrack) : null;
+    const djKey = trackKey(djTrack);
+
+    const base = prev && prev.length ? prev : tracks || [];
+
+    const others = base.filter((t) => {
+      const key = trackKey(t);
+      return key !== currentKey && key !== djKey;
+    });
+
+    return [djTrack, ...others];
+  });
+}, [
+  queue,
+  shuffle,
+  currentTrack,
+  openPlayer,
+  inRoom,
+  isYouTube,
+  tracks,
+  setQueue,
+]);
+
+
 
   const playPrev = useCallback(() => {
     if (!queue.length) return;
