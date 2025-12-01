@@ -3175,7 +3175,7 @@ function MusicApp({ user, onLogout }) {
   };
 
   const theme = getThemeForTrack(currentTrack);
-// 🎨 Premium neon visualizer with reflection (fake, no audio analysis)
+// 🎨 Premium neon visualizer with reflection (optimized)
 useEffect(() => {
   const canvas = visualizerCanvasRef.current;
   if (!showPlayer || !canvas) return;
@@ -3183,9 +3183,22 @@ useEffect(() => {
   const ctx = canvas.getContext("2d");
   let frameId;
   let phase = 0;
+  let lastTime = 0;
+  let prevW = -1;
+  let prevH = -1;
+  let prevDpr = -1;
 
-  const render = () => {
-    frameId = requestAnimationFrame(render);
+  const render = (time = 0, loop = false) => {
+    if (loop) {
+      frameId = requestAnimationFrame((t) => render(t, true));
+    }
+
+    // ~30 FPS cap
+    if (loop) {
+      const fpsInterval = 1000 / 30;
+      if (time - lastTime < fpsInterval) return;
+      lastTime = time;
+    }
 
     const rect = canvas.getBoundingClientRect();
     const width = rect.width || 0;
@@ -3193,9 +3206,18 @@ useEffect(() => {
     if (!width || !height) return;
 
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // only resize if changed (cheaper)
+    if (width !== prevW || height !== prevH || dpr !== prevDpr) {
+      prevW = width;
+      prevH = height;
+      prevDpr = dpr;
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    } else {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
 
     // ----- background + glow -----
     ctx.clearRect(0, 0, width, height);
@@ -3213,38 +3235,38 @@ useEffect(() => {
       height * 0.6,
       height * 0.9
     );
-    glow.addColorStop(0, `${theme.secondary}33`); // light
+    glow.addColorStop(0, `${theme.secondary}33`);
     glow.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = glow;
     ctx.fillRect(0, 0, width, height);
 
-    const barCount = 48;
+    const barCount = 32; // was 48 – lighter but still dense
     const gap = 2;
     const barWidth = (width - gap * (barCount - 1)) / barCount;
 
-    // baseline where bars stand (upper part = bars, lower part = reflection)
     const baseY = height * 0.62;
-    const maxMainHeight = height * 0.5; // how high bars can go
-    const maxReflectHeight = height * 0.25;
+    const maxMainHeight = height * 0.5;
+    const maxReflectHeight = height * 0.24;
 
-    // gradient for bars (top→bottom)
-    const barGrad = ctx.createLinearGradient(0, baseY - maxMainHeight, 0, baseY);
+    const barGrad = ctx.createLinearGradient(
+      0,
+      baseY - maxMainHeight,
+      0,
+      baseY
+    );
     barGrad.addColorStop(0, theme.secondary);
     barGrad.addColorStop(1, theme.primary);
 
     for (let i = 0; i < barCount; i++) {
-      const t = i / (barCount - 1); // 0..1 across width
+      const tNorm = i / (barCount - 1);
 
-      // envelope so middle bars are taller, edges smaller
-      const envelope = Math.sin(Math.PI * t) ** 0.9;
+      const envelope = Math.sin(Math.PI * tNorm) ** 0.9;
 
-      // base waves
       const wave1 = (Math.sin(phase + i * 0.28) + 1) / 2;
       const wave2 = (Math.sin(phase * 0.6 + i * 0.14 + 1.3) + 1) / 2;
 
-      // mix + tiny random for organic feel
       const base = (wave1 * 0.7 + wave2 * 0.3) * envelope;
-      const randomPulse = (Math.sin(phase * 2 + i * 0.5) + 1) * 0.03;
+      const randomPulse = (Math.sin(phase * 2 + i * 0.5) + 1) * 0.02;
       const value = Math.min(1, base + randomPulse);
 
       const mainHeight = value * maxMainHeight;
@@ -3252,30 +3274,26 @@ useEffect(() => {
 
       const x = i * (barWidth + gap);
       const topY = baseY - mainHeight;
-
       const radius = Math.min(8, barWidth / 2);
 
       // ----- soft shadow behind main bar -----
-      ctx.globalAlpha = 0.35;
+      ctx.globalAlpha = 0.3;
       ctx.fillStyle = theme.primary;
       ctx.beginPath();
-      ctx.moveTo(x, baseY + 4);
-      ctx.lineTo(x, topY - 4);
-      ctx.lineTo(x + barWidth, topY - 4);
-      ctx.lineTo(x + barWidth, baseY + 4);
+      ctx.moveTo(x, baseY + 3);
+      ctx.lineTo(x, topY - 3);
+      ctx.lineTo(x + barWidth, topY - 3);
+      ctx.lineTo(x + barWidth, baseY + 3);
       ctx.closePath();
       ctx.fill();
 
       // ----- main bar (rounded, gradient) -----
       ctx.globalAlpha = 0.95;
       ctx.fillStyle = barGrad;
-
       ctx.beginPath();
-      // bottom-left
       ctx.moveTo(x, baseY);
       ctx.lineTo(x, topY + radius);
       ctx.quadraticCurveTo(x, topY, x + radius, topY);
-      // top edge
       ctx.lineTo(x + barWidth - radius, topY);
       ctx.quadraticCurveTo(
         x + barWidth,
@@ -3283,7 +3301,6 @@ useEffect(() => {
         x + barWidth,
         topY + radius
       );
-      // bottom-right
       ctx.lineTo(x + barWidth, baseY);
       ctx.closePath();
       ctx.fill();
@@ -3301,62 +3318,58 @@ useEffect(() => {
       ctx.fillStyle = "rgba(255,255,255,0.5)";
       ctx.fill();
 
-      // ----- reflection (soft, blurred-ish) -----
+      // ----- reflection (no blur, just gradient) -----
       if (reflectHeight > 2) {
-        ctx.save();
-        ctx.globalAlpha = 0.22;
-        ctx.filter = "blur(4px)";
-
         const refTop = baseY;
         const refBottom = baseY + reflectHeight;
 
-        const refGrad = ctx.createLinearGradient(0, refTop, 0, refBottom);
-        refGrad.addColorStop(0, theme.primary);
-        refGrad.addColorStop(1, "rgba(0,0,0,0)");
-
-        ctx.fillStyle = refGrad;
-
-        ctx.beginPath();
-        ctx.moveTo(x, refTop);
-        ctx.lineTo(x, refBottom - radius);
-        ctx.quadraticCurveTo(
-          x,
-          refBottom,
-          x + radius,
+        const refGrad = ctx.createLinearGradient(
+          0,
+          refTop,
+          0,
           refBottom
         );
-        ctx.lineTo(x + barWidth - radius, refBottom);
-        ctx.quadraticCurveTo(
-          x + barWidth,
-          refBottom,
-          x + barWidth,
-          refBottom - radius
-        );
+        refGrad.addColorStop(0, `${theme.primary}AA`);
+        refGrad.addColorStop(1, "rgba(0,0,0,0)");
+
+        ctx.globalAlpha = 0.25;
+        ctx.fillStyle = refGrad;
+        ctx.beginPath();
+        ctx.moveTo(x, refTop);
+        ctx.lineTo(x, refBottom);
+        ctx.lineTo(x + barWidth, refBottom);
         ctx.lineTo(x + barWidth, refTop);
         ctx.closePath();
         ctx.fill();
-
-        ctx.restore();
       }
     }
 
-    // speed: faster when playing, subtle idle motion when paused
-    const speed = isPlaying ? 0.12 : 0.03;
-    phase += speed;
+    // update phase only if looping (playing)
+    if (loop) {
+      const speed = 0.12; // fixed speed for playing
+      phase += speed;
+    }
   };
 
-  render();
+  // draw once (paused OR initial)
+  render(0, false);
+
+  // if playing, start animation loop
+  if (isPlaying) {
+    frameId = requestAnimationFrame((t) => render(t, true));
+  }
 
   return () => {
     if (frameId) cancelAnimationFrame(frameId);
   };
-}, [isPlaying, theme.primary, theme.secondary,showPlayer]);
+}, [isPlaying, theme.primary, theme.secondary, showPlayer]);
+
 // 🎛️ MINI PLAYER VISUALIZER STRIP (polished)
 useEffect(() => {
   const canvas = miniVisualizerCanvasRef.current;
 
   // only run when mini player is visible and a track exists
-  if (!canvas || showPlayer || !currentTrack) return;
+  if (!canvas || showPlayer || !currentTrack ) return;
 
   const ctx = canvas.getContext("2d");
   let frameId;
