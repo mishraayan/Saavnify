@@ -3177,7 +3177,7 @@ function MusicApp({ user, onLogout }) {
 // 🎨 Premium neon visualizer with reflection (fake, no audio analysis)
 useEffect(() => {
   const canvas = visualizerCanvasRef.current;
-  if (!canvas) return;
+  if (!showPlayer || !canvas) return;
 
   const ctx = canvas.getContext("2d");
   let frameId;
@@ -3349,7 +3349,7 @@ useEffect(() => {
   return () => {
     if (frameId) cancelAnimationFrame(frameId);
   };
-}, [isPlaying, theme.primary, theme.secondary]);
+}, [isPlaying, theme.primary, theme.secondary,showPlayer]);
 
 
   // ---------- QUEUE (UP NEXT) ----------
