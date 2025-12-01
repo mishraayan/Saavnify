@@ -829,6 +829,9 @@ function MusicApp({ user, onLogout }) {
   }, [user?.avatar, user?.name]);
 
   const audioRef = useRef(null);
+  // 🎧 Web Audio visualizer
+  const visualizerCanvasRef = useRef(null);
+
 
   const trackKey = useCallback(
     (track) =>
@@ -1088,6 +1091,7 @@ function MusicApp({ user, onLogout }) {
     }
   };
 
+
   // Restore playback state on load
   // restore playback
   useEffect(() => {
@@ -1107,8 +1111,9 @@ function MusicApp({ user, onLogout }) {
         if (!audio) {
           audio = new Audio();
           audioRef.current = audio;
+          
         }
-
+        
         audio.src = state.currentTrack.url;
         audio.currentTime = state.currentTime || 0;
         setIsPlaying(false);
@@ -1514,8 +1519,9 @@ function MusicApp({ user, onLogout }) {
       if (!audio) {
         audio = new Audio();
         audioRef.current = audio;
+       
       }
-
+ 
       if (room.current_track) {
         const track = room.current_track;
 
@@ -2679,8 +2685,10 @@ function MusicApp({ user, onLogout }) {
       if (!audio) {
         audio = new Audio();
         audioRef.current = audio;
+       
       }
-
+            
+      
       setCurrentTrack(track);
       setShowPlayer(true);
       audio.src = track.url;
@@ -3166,6 +3174,183 @@ function MusicApp({ user, onLogout }) {
   };
 
   const theme = getThemeForTrack(currentTrack);
+// 🎨 Premium neon visualizer with reflection (fake, no audio analysis)
+useEffect(() => {
+  const canvas = visualizerCanvasRef.current;
+  if (!canvas) return;
+
+  const ctx = canvas.getContext("2d");
+  let frameId;
+  let phase = 0;
+
+  const render = () => {
+    frameId = requestAnimationFrame(render);
+
+    const rect = canvas.getBoundingClientRect();
+    const width = rect.width || 0;
+    const height = rect.height || 0;
+    if (!width || !height) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // ----- background + glow -----
+    ctx.clearRect(0, 0, width, height);
+
+    // dark base
+    ctx.fillStyle = "rgba(0,0,0,0.9)";
+    ctx.fillRect(0, 0, width, height);
+
+    // soft radial glow behind bars
+    const glow = ctx.createRadialGradient(
+      width / 2,
+      height * 0.6,
+      height * 0.1,
+      width / 2,
+      height * 0.6,
+      height * 0.9
+    );
+    glow.addColorStop(0, `${theme.secondary}33`); // light
+    glow.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, width, height);
+
+    const barCount = 48;
+    const gap = 2;
+    const barWidth = (width - gap * (barCount - 1)) / barCount;
+
+    // baseline where bars stand (upper part = bars, lower part = reflection)
+    const baseY = height * 0.62;
+    const maxMainHeight = height * 0.5; // how high bars can go
+    const maxReflectHeight = height * 0.25;
+
+    // gradient for bars (top→bottom)
+    const barGrad = ctx.createLinearGradient(0, baseY - maxMainHeight, 0, baseY);
+    barGrad.addColorStop(0, theme.secondary);
+    barGrad.addColorStop(1, theme.primary);
+
+    for (let i = 0; i < barCount; i++) {
+      const t = i / (barCount - 1); // 0..1 across width
+
+      // envelope so middle bars are taller, edges smaller
+      const envelope = Math.sin(Math.PI * t) ** 0.9;
+
+      // base waves
+      const wave1 = (Math.sin(phase + i * 0.28) + 1) / 2;
+      const wave2 = (Math.sin(phase * 0.6 + i * 0.14 + 1.3) + 1) / 2;
+
+      // mix + tiny random for organic feel
+      const base = (wave1 * 0.7 + wave2 * 0.3) * envelope;
+      const randomPulse = (Math.sin(phase * 2 + i * 0.5) + 1) * 0.03;
+      const value = Math.min(1, base + randomPulse);
+
+      const mainHeight = value * maxMainHeight;
+      const reflectHeight = value * maxReflectHeight;
+
+      const x = i * (barWidth + gap);
+      const topY = baseY - mainHeight;
+
+      const radius = Math.min(8, barWidth / 2);
+
+      // ----- soft shadow behind main bar -----
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = theme.primary;
+      ctx.beginPath();
+      ctx.moveTo(x, baseY + 4);
+      ctx.lineTo(x, topY - 4);
+      ctx.lineTo(x + barWidth, topY - 4);
+      ctx.lineTo(x + barWidth, baseY + 4);
+      ctx.closePath();
+      ctx.fill();
+
+      // ----- main bar (rounded, gradient) -----
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = barGrad;
+
+      ctx.beginPath();
+      // bottom-left
+      ctx.moveTo(x, baseY);
+      ctx.lineTo(x, topY + radius);
+      ctx.quadraticCurveTo(x, topY, x + radius, topY);
+      // top edge
+      ctx.lineTo(x + barWidth - radius, topY);
+      ctx.quadraticCurveTo(
+        x + barWidth,
+        topY,
+        x + barWidth,
+        topY + radius
+      );
+      // bottom-right
+      ctx.lineTo(x + barWidth, baseY);
+      ctx.closePath();
+      ctx.fill();
+
+      // ----- highlight at the top cap -----
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      ctx.arc(
+        x + barWidth / 2,
+        topY + radius * 0.3,
+        barWidth * 0.2,
+        0,
+        Math.PI * 2
+      );
+      ctx.fillStyle = "rgba(255,255,255,0.5)";
+      ctx.fill();
+
+      // ----- reflection (soft, blurred-ish) -----
+      if (reflectHeight > 2) {
+        ctx.save();
+        ctx.globalAlpha = 0.22;
+        ctx.filter = "blur(4px)";
+
+        const refTop = baseY;
+        const refBottom = baseY + reflectHeight;
+
+        const refGrad = ctx.createLinearGradient(0, refTop, 0, refBottom);
+        refGrad.addColorStop(0, theme.primary);
+        refGrad.addColorStop(1, "rgba(0,0,0,0)");
+
+        ctx.fillStyle = refGrad;
+
+        ctx.beginPath();
+        ctx.moveTo(x, refTop);
+        ctx.lineTo(x, refBottom - radius);
+        ctx.quadraticCurveTo(
+          x,
+          refBottom,
+          x + radius,
+          refBottom
+        );
+        ctx.lineTo(x + barWidth - radius, refBottom);
+        ctx.quadraticCurveTo(
+          x + barWidth,
+          refBottom,
+          x + barWidth,
+          refBottom - radius
+        );
+        ctx.lineTo(x + barWidth, refTop);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.restore();
+      }
+    }
+
+    // speed: faster when playing, subtle idle motion when paused
+    const speed = isPlaying ? 0.12 : 0.03;
+    phase += speed;
+  };
+
+  render();
+
+  return () => {
+    if (frameId) cancelAnimationFrame(frameId);
+  };
+}, [isPlaying, theme.primary, theme.secondary]);
+
 
   // ---------- QUEUE (UP NEXT) ----------
   let upNext = [];
@@ -3933,6 +4118,13 @@ function MusicApp({ user, onLogout }) {
                   }}
                 />
               </div>
+                          {/* 🎧 Premium visualizer (works for Saavn + YT) */}
+<canvas
+  ref={visualizerCanvasRef}
+  className="mt-5 w-64 md:w-80 h-28 rounded-3xl bg-black/60 border border-white/10 shadow-[0_0_40px_rgba(0,0,0,0.9)]"
+/>
+              
+
 
               {/* CONTROLS FIRST */}
               <div
