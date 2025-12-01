@@ -90,15 +90,15 @@ function adaptSongs(data) {
 
 // ---------- LANDING SCREEN ----------
 function LandingScreen({ onGetStarted }) {
-const [isMobile, setIsMobile] = useState(
-  typeof window !== "undefined" ? window.innerWidth <= 768 : false
-);
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== "undefined" ? window.innerWidth <= 768 : false
+  );
 
-useEffect(() => {
-  const handleResize = () => setIsMobile(window.innerWidth <= 768);
-  window.addEventListener("resize", handleResize);
-  return () => window.removeEventListener("resize", handleResize);
-}, []);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   return (
     <div className="min-h-screen relative overflow-hidden bg-gradient-to-br from-indigo-900 via-black to-purple-900 flex items-center justify-center">
@@ -333,9 +333,9 @@ function SearchScreen({
   loading,
   suggestions = [],
   showSuggestions = false,
-  onSearchChange,   // from parent (MusicApp)
+  onSearchChange, // from parent (MusicApp)
   onSuggestionClick,
-  onManualSearch,   // from parent (MusicApp)
+  onManualSearch, // from parent (MusicApp)
 }) {
   // fallback: if parent didn't pass custom handler, just use local one
   const handleChange = (e) => {
@@ -476,7 +476,6 @@ function SearchScreen({
     </div>
   );
 }
-
 
 function ProfileScreen({
   user,
@@ -666,77 +665,77 @@ function ProfileScreen({
           )}
         </div>
       </div>
-       {/* 👇 Mobile-only room + logout controls */}
-    <div className="mt-6 md:hidden space-y-3">
-      {!inRoom ? (
-        <>
-          {/* Create Room when NOT in a room */}
-          {onCreateRoom && (
-            <button
-              type="button"
-              onClick={onCreateRoom}
-              className="w-full px-4 py-2 rounded-full bg-emerald-500/80 hover:bg-emerald-500 text-sm font-semibold"
-            >
-              Create Room
-            </button>
-          )}
+      {/* 👇 Mobile-only room + logout controls */}
+      <div className="mt-6 md:hidden space-y-3">
+        {!inRoom ? (
+          <>
+            {/* Create Room when NOT in a room */}
+            {onCreateRoom && (
+              <button
+                type="button"
+                onClick={onCreateRoom}
+                className="w-full px-4 py-2 rounded-full bg-emerald-500/80 hover:bg-emerald-500 text-sm font-semibold"
+              >
+                Create Room
+              </button>
+            )}
 
-          {/* Logout */}
-          {onLogout && (
-            <button
-              type="button"
-              onClick={onLogout}
-              className="w-full px-4 py-2 rounded-full bg-red-500/80 hover:bg-red-500 text-sm font-semibold"
-            >
-              Logout
-            </button>
-          )}
-        </>
-      ) : (
-        <>
-          {/* Already IN a room → show room controls */}
-          {onShareRoom && (
-            <button
-              type="button"
-              onClick={onShareRoom}
-              className="w-full px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-sm font-semibold"
-            >
-              Share Room
-            </button>
-          )}
+            {/* Logout */}
+            {onLogout && (
+              <button
+                type="button"
+                onClick={onLogout}
+                className="w-full px-4 py-2 rounded-full bg-red-500/80 hover:bg-red-500 text-sm font-semibold"
+              >
+                Logout
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            {/* Already IN a room → show room controls */}
+            {onShareRoom && (
+              <button
+                type="button"
+                onClick={onShareRoom}
+                className="w-full px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-sm font-semibold"
+              >
+                Share Room
+              </button>
+            )}
 
-          {onLeaveRoom && (
-            <button
-              type="button"
-              onClick={onLeaveRoom}
-              className="w-full px-4 py-2 rounded-full bg-orange-500/80 hover:bg-orange-500 text-sm font-semibold"
-            >
-              Leave Room
-            </button>
-          )}
+            {onLeaveRoom && (
+              <button
+                type="button"
+                onClick={onLeaveRoom}
+                className="w-full px-4 py-2 rounded-full bg-orange-500/80 hover:bg-orange-500 text-sm font-semibold"
+              >
+                Leave Room
+              </button>
+            )}
 
-          {isRoomOwner && onEndRoom && (
-            <button
-              type="button"
-              onClick={onEndRoom}
-              className="w-full px-4 py-2 rounded-full bg-red-500/80 hover:bg-red-500 text-sm font-semibold"
-            >
-              End Room
-            </button>
-          )}
+            {isRoomOwner && onEndRoom && (
+              <button
+                type="button"
+                onClick={onEndRoom}
+                className="w-full px-4 py-2 rounded-full bg-red-500/80 hover:bg-red-500 text-sm font-semibold"
+              >
+                End Room
+              </button>
+            )}
 
-          {onLogout && (
-            <button
-              type="button"
-              onClick={onLogout}
-              className="w-full px-4 py-2 rounded-full bg-red-500/80 hover:bg-red-500 text-sm font-semibold"
-            >
-              Logout
-            </button>
-          )}
-        </>
-      )}
-    </div>
+            {onLogout && (
+              <button
+                type="button"
+                onClick={onLogout}
+                className="w-full px-4 py-2 rounded-full bg-red-500/80 hover:bg-red-500 text-sm font-semibold"
+              >
+                Logout
+              </button>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -813,17 +812,16 @@ function MusicApp({ user, onLogout }) {
   const [profileName, setProfileName] = useState(user?.name || "Music Lover");
   const [profileSaving, setProfileSaving] = useState(false);
   const [isMobile, setIsMobile] = useState(
-  typeof window !== "undefined" ? window.innerWidth <= 768 : false
-);
+    typeof window !== "undefined" ? window.innerWidth <= 768 : false
+  );
 
-useEffect(() => {
-  const handleResize = () => {
-    setIsMobile(window.innerWidth <= 768);
-  };
-  window.addEventListener("resize", handleResize);
-  return () => window.removeEventListener("resize", handleResize);
-}, []);
-
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 768);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   useEffect(() => {
     setAvatarUrl(user?.avatar || null);
@@ -1619,11 +1617,71 @@ useEffect(() => {
           controls: 0,
           rel: 0,
           modestbranding: 1,
+          playsinline: 1, // ← YE DAAL
+          enablejsapi: 1, // ← YE BHI DAAL (already hai par confirm)
+          origin: window.location.origin,
         },
         events: {
           onReady: (e) => {
             if (cancelled) return;
             ytPlayerRef.current = e.target;
+            if ("mediaSession" in navigator) {
+              navigator.mediaSession.metadata = new MediaMetadata({
+                title: currentTrack.title,
+                artist: currentTrack.singers || "YouTube",
+                artwork: [
+                  {
+                    src: currentTrack.image_url,
+                    sizes: "96x96",
+                    type: "image/jpeg",
+                  },
+                  {
+                    src: currentTrack.image_url,
+                    sizes: "128x128",
+                    type: "image/jpeg",
+                  },
+                  {
+                    src: currentTrack.image_url,
+                    sizes: "192x192",
+                    type: "image/jpeg",
+                  },
+                  {
+                    src: currentTrack.image_url,
+                    sizes: "256x256",
+                    type: "image/jpeg",
+                  },
+                  {
+                    src: currentTrack.image_url,
+                    sizes: "384x384",
+                    type: "image/jpeg",
+                  },
+                  {
+                    src: currentTrack.image_url,
+                    sizes: "512x512",
+                    type: "image/jpeg",
+                  },
+                ],
+              });
+
+              navigator.mediaSession.setActionHandler("play", () =>
+                e.target.playVideo()
+              );
+              navigator.mediaSession.setActionHandler("pause", () =>
+                e.target.pauseVideo()
+              );
+              navigator.mediaSession.setActionHandler("previoustrack", () =>
+                playPrev?.()
+              );
+              navigator.mediaSession.setActionHandler("nexttrack", () =>
+                playNext?.()
+              );
+              navigator.mediaSession.setActionHandler("seekbackward", () =>
+                e.target.seekTo(e.target.getCurrentTime() - 10)
+              );
+              navigator.mediaSession.setActionHandler("seekforward", () =>
+                e.target.seekTo(e.target.getCurrentTime() + 10)
+              );
+            }
 
             if (ytLastTime > 0) {
               try {
@@ -3498,7 +3556,7 @@ useEffect(() => {
           )}
 
           {/* MINI PLAYER (BOTTOM) */}
-         {currentTrack && !(activeTab === "account" && isMobile) && (
+          {currentTrack && !(activeTab === "account" && isMobile) && (
             <div className="fixed bottom-14 md:bottom-4 left-1/2 -translate-x-1/2 w-[96%] md:w-[70%] lg:w-[55%] bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl px-4 py-3 flex items-center justify-between gap-3 shadow-2xl">
               <div
                 className="flex items-center gap-3 cursor-pointer"
