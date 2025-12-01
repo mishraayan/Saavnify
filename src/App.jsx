@@ -831,6 +831,7 @@ function MusicApp({ user, onLogout }) {
   const audioRef = useRef(null);
   // 🎧 Web Audio visualizer
   const visualizerCanvasRef = useRef(null);
+  const miniVisualizerCanvasRef = useRef(null);
 
 
   const trackKey = useCallback(
@@ -3350,6 +3351,118 @@ useEffect(() => {
     if (frameId) cancelAnimationFrame(frameId);
   };
 }, [isPlaying, theme.primary, theme.secondary,showPlayer]);
+// 🎛️ MINI PLAYER VISUALIZER STRIP (polished)
+useEffect(() => {
+  const canvas = miniVisualizerCanvasRef.current;
+
+  // only run when mini player is visible and a track exists
+  if (!canvas || showPlayer || !currentTrack) return;
+
+  const ctx = canvas.getContext("2d");
+  let frameId;
+  let phase = 0;
+
+  const render = () => {
+    frameId = requestAnimationFrame(render);
+
+    const rect = canvas.getBoundingClientRect();
+    const width = rect.width || 0;
+    const height = rect.height || 0;
+    if (!width || !height) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // background inside pill
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "rgba(0,0,0,0.75)";
+    ctx.fillRect(0, 0, width, height);
+
+    const barCount = 16;
+    const gap = 1;
+    const barWidth = (width - gap * (barCount - 1)) / barCount;
+    const maxHeight = height * 0.9;
+    const baseY = height * 0.95;
+
+    // gradient across bars
+    const grad = ctx.createLinearGradient(0, 0, width, 0);
+    grad.addColorStop(0, theme.primary);
+    grad.addColorStop(1, theme.secondary);
+
+    for (let i = 0; i < barCount; i++) {
+      const t = i / (barCount - 1); // 0..1
+      const envelope = Math.sin(Math.PI * t) ** 0.85; // smoother center bump
+
+      const wave1 = (Math.sin(phase + i * 0.42) + 1) / 2;
+      const wave2 = (Math.sin(phase * 0.65 + i * 0.22 + 1.4) + 1) / 2;
+
+      const base = (wave1 * 0.7 + wave2 * 0.3) * envelope;
+      const random = (Math.sin(phase * 1.9 + i * 0.75) + 1) * 0.02;
+      const value = Math.min(1, base + random);
+
+      const barHeight = value * maxHeight;
+      const x = i * (barWidth + gap);
+      const topY = baseY - barHeight;
+      const radius = Math.min(4, barWidth / 2);
+
+      // soft glow bar behind
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = theme.primary;
+      ctx.beginPath();
+      ctx.moveTo(x, baseY);
+      ctx.lineTo(x, topY - 3);
+      ctx.lineTo(x + barWidth, topY - 3);
+      ctx.lineTo(x + barWidth, baseY);
+      ctx.closePath();
+      ctx.fill();
+
+      // main bar
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(x, baseY);
+      ctx.lineTo(x, topY + radius);
+      ctx.quadraticCurveTo(x, topY, x + radius, topY);
+      ctx.lineTo(x + barWidth - radius, topY);
+      ctx.quadraticCurveTo(
+        x + barWidth,
+        topY,
+        x + barWidth,
+        topY + radius
+      );
+      ctx.lineTo(x + barWidth, baseY);
+      ctx.closePath();
+      ctx.fill();
+
+      // subtle highlight cap
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      ctx.arc(
+        x + barWidth / 2,
+        topY + radius * 0.35,
+        barWidth * 0.18,
+        0,
+        Math.PI * 2
+      );
+      ctx.fillStyle = "rgba(255,255,255,0.45)";
+      ctx.fill();
+    }
+
+    // speed: a bit faster when playing, very calm when paused
+    const speed = isPlaying ? 0.16 : 0.045;
+    phase += speed;
+  };
+
+  render();
+
+  return () => {
+    if (frameId) cancelAnimationFrame(frameId);
+  };
+}, [isPlaying, theme.primary, theme.secondary, showPlayer, currentTrack]);
+
+
 
 
   // ---------- QUEUE (UP NEXT) ----------
@@ -3743,81 +3856,105 @@ useEffect(() => {
             </div>
           )}
 
-          {/* MINI PLAYER (BOTTOM) */}
-          {currentTrack && !(activeTab === "account" && isMobile) && (
-            <div className="fixed bottom-14 md:bottom-4 left-1/2 -translate-x-1/2 w-[96%] md:w-[70%] lg:w-[55%] bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl px-4 py-3 flex items-center justify-between gap-3 shadow-2xl">
+         {/* MINI PLAYER (BOTTOM) */}
+{currentTrack && !(activeTab === "account" && isMobile) && (
+  <div className="fixed bottom-14 md:bottom-4 left-1/2 -translate-x-1/2 w-[96%] md:w-[70%] lg:w-[55%] z-40">
+    <div
+      className="
+        relative w-full
+        bg-white/10
+        backdrop-blur-xl
+        border border-white/20
+        rounded-3xl
+        shadow-2xl
+        overflow-hidden
+        px-4 py-3
+      "
+    >
+      {/* 🔊 VISUALIZER BACKGROUND */}
+      <canvas
+        ref={miniVisualizerCanvasRef}
+        className="absolute inset-0 w-full h-full opacity-40 pointer-events-none"
+      />
+
+      {/* FOREGROUND CONTENT */}
+      <div className="relative flex items-center justify-between gap-3">
+        <div
+          className="flex items-center gap-3 cursor-pointer"
+          onClick={() => setShowPlayer(true)}
+        >
+          <img
+            src={currentTrack.image_url}
+            alt={currentTrack.title}
+            className="w-10 h-10 md:w-12 md:h-12 rounded-2xl object-cover"
+          />
+          <div className="max-w-[140px] sm:max-w-[220px]">
+            <p className="text-xs md:text-sm font-semibold truncate">
+              {currentTrack.title}
+            </p>
+            <p className="text-[11px] md:text-xs text-gray-300 truncate">
+              {currentTrack.singers}
+            </p>
+            <div className="mt-1 w-full h-1 bg-white/20 rounded-full overflow-hidden">
               <div
-                className="flex items-center gap-3 cursor-pointer"
-                onClick={() => setShowPlayer(true)}
-              >
-                <img
-                  src={currentTrack.image_url}
-                  alt={currentTrack.title}
-                  className="w-10 h-10 md:w-12 md:h-12 rounded-2xl object-cover"
-                />
-                <div className="max-w-[140px] sm:max-w-[220px]">
-                  <p className="text-xs md:text-sm font-semibold truncate">
-                    {currentTrack.title}
-                  </p>
-                  <p className="text-[11px] md:text-xs text-gray-300 truncate">
-                    {currentTrack.singers}
-                  </p>
-                  <div className="mt-1 w-full h-1 bg-white/20 rounded-full overflow-hidden">
-                    <div
-                      className="h-full"
-                      style={{
-                        width: `${progress}%`,
-                        background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 sm:gap-4">
-                {/* ⏮ PREV */}
-                <button
-                  onClick={canControlRoomPlayback ? playPrev : undefined}
-                  disabled={!canControlRoomPlayback}
-                  className={`text-gray-200 ${
-                    !canControlRoomPlayback
-                      ? "opacity-40 cursor-not-allowed"
-                      : "hover:scale-110 transition-transform"
-                  }`}
-                >
-                  <SkipBack size={18} />
-                </button>
-
-                {/* ▶ / ⏸ */}
-                <button
-                  onClick={inRoom ? handleRoomPlayPause : handlePlayPause}
-                  disabled={inRoom && !isRoomOwner}
-                  className={`w-9 h-9 rounded-full flex items-center justify-center ${
-                    inRoom && !isRoomOwner
-                      ? "opacity-40 cursor-not-allowed"
-                      : "hover:opacity-90"
-                  }`}
-                  style={{
-                    background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
-                  }}
-                >
-                  {isPlaying ? <Pause size={18} /> : <Play size={18} />}
-                </button>
-
-                {/* ⏭ NEXT */}
-                <button
-                  onClick={canControlRoomPlayback ? playNext : undefined}
-                  disabled={!canControlRoomPlayback}
-                  className={`text-gray-200 ${
-                    !canControlRoomPlayback
-                      ? "opacity-40 cursor-not-allowed"
-                      : "hover:scale-110 transition-transform"
-                  }`}
-                >
-                  <SkipForward size={18} />
-                </button>
-              </div>
+                className="h-full"
+                style={{
+                  width: `${progress}%`,
+                  background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
+                }}
+              />
             </div>
-          )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 sm:gap-4">
+          {/* ⏮ PREV */}
+          <button
+            onClick={canControlRoomPlayback ? playPrev : undefined}
+            disabled={!canControlRoomPlayback}
+            className={`text-gray-200 ${
+              !canControlRoomPlayback
+                ? "opacity-40 cursor-not-allowed"
+                : "hover:scale-110 transition-transform"
+            }`}
+          >
+            <SkipBack size={18} />
+          </button>
+
+          {/* ▶ / ⏸ */}
+          <button
+            onClick={inRoom ? handleRoomPlayPause : handlePlayPause}
+            disabled={inRoom && !isRoomOwner}
+            className={`w-9 h-9 rounded-full flex items-center justify-center ${
+              inRoom && !isRoomOwner
+                ? "opacity-40 cursor-not-allowed"
+                : "hover:opacity-90"
+            }`}
+            style={{
+              background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
+            }}
+          >
+            {isPlaying ? <Pause size={18} /> : <Play size={18} />}
+          </button>
+
+          {/* ⏭ NEXT */}
+          <button
+            onClick={canControlRoomPlayback ? playNext : undefined}
+            disabled={!canControlRoomPlayback}
+            className={`text-gray-200 ${
+              !canControlRoomPlayback
+                ? "opacity-40 cursor-not-allowed"
+                : "hover:scale-110 transition-transform"
+            }`}
+          >
+            <SkipForward size={18} />
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+
 
           {/* MOBILE BOTTOM NAV */}
           <nav className="md:hidden fixed bottom-0 inset-x-0 bg-black/80 border-t border-white/10 backdrop-blur-xl flex justify-around py-2 text-xs">
