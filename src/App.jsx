@@ -28,7 +28,7 @@ const YT_API = "https://yt-backend-8b51.onrender.com";
 const MXM_API = "https://saavnify-mxm-backend.onrender.com";
 
 // ---------- THEME UTILS ----------
-function getThemeForTrack(track) {
+function getHashThemeForTrack(track) {
   const fallback = {
     primary: "#38bdf8", // cyan
     secondary: "#a855f7", // purple
@@ -43,31 +43,133 @@ function getThemeForTrack(track) {
   }
   switch (hash) {
     case 0:
-      return {
-        primary: "#38bdf8",
-        secondary: "#a855f7",
-        accent: "#22c55e",
-      };
+      return { primary: "#38bdf8", secondary: "#a855f7", accent: "#22c55e" };
     case 1:
-      return {
-        primary: "#f97316",
-        secondary: "#ec4899",
-        accent: "#facc15",
-      };
+      return { primary: "#f97316", secondary: "#ec4899", accent: "#facc15" };
     case 2:
-      return {
-        primary: "#4ade80",
-        secondary: "#22d3ee",
-        accent: "#22c55e",
-      };
+      return { primary: "#4ade80", secondary: "#22d3ee", accent: "#22c55e" };
     case 3:
     default:
-      return {
-        primary: "#6366f1",
-        secondary: "#0ea5e9",
-        accent: "#22c55e",
-      };
+      return { primary: "#6366f1", secondary: "#0ea5e9", accent: "#22c55e" };
   }
+}
+
+// 2) small helper to clamp values
+function clamp01(x) {
+  return Math.max(0, Math.min(1, x));
+}
+
+// 3) extract approximate dominant color from image URL using canvas
+function extractThemeFromImage(url) {
+  return new Promise((resolve, reject) => {
+    if (typeof window === "undefined") {
+      reject(new Error("No window"));
+      return;
+    }
+
+    const img = new Image();
+    img.crossOrigin = "anonymous"; // may still fail if server blocks CORS
+
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          reject(new Error("No canvas context"));
+          return;
+        }
+
+        const size = 32; // small for performance
+        canvas.width = size;
+        canvas.height = size;
+
+        ctx.drawImage(img, 0, 0, size, size);
+        const imageData = ctx.getImageData(0, 0, size, size).data;
+
+        let r = 0,
+          g = 0,
+          b = 0,
+          count = 0;
+
+        // sample every 4th pixel for speed
+        for (let i = 0; i < imageData.length; i += 4 * 4) {
+          const rr = imageData[i];
+          const gg = imageData[i + 1];
+          const bb = imageData[i + 2];
+          const alpha = imageData[i + 3];
+
+          if (alpha < 128) continue; // skip transparent
+
+          r += rr;
+          g += gg;
+          b += bb;
+          count++;
+        }
+
+        if (!count) {
+          reject(new Error("No pixels"));
+          return;
+        }
+
+        r = Math.round(r / count);
+        g = Math.round(g / count);
+        b = Math.round(b / count);
+
+        // convert to HSL for nicer variations
+        const rf = r / 255;
+        const gf = g / 255;
+        const bf = b / 255;
+        const max = Math.max(rf, gf, bf);
+        const min = Math.min(rf, gf, bf);
+        const l = (max + min) / 2;
+        let h = 0,
+          s = 0;
+
+        if (max !== min) {
+          const d = max - min;
+          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+
+          switch (max) {
+            case rf:
+              h = (gf - bf) / d + (gf < bf ? 6 : 0);
+              break;
+            case gf:
+              h = (bf - rf) / d + 2;
+              break;
+            case bf:
+              h = (rf - gf) / d + 4;
+              break;
+          }
+          h /= 6;
+        }
+
+        const hDeg = h * 360;
+
+        const primary = `hsl(${Math.round(hDeg)}deg, ${Math.round(
+          clamp01(s) * 70 + 20
+        )}%, ${Math.round(clamp01(l) * 40 + 20)}%)`;
+
+        const secondary = `hsl(${Math.round(
+          (hDeg + 35) % 360
+        )}deg, ${Math.round(clamp01(s) * 70 + 15)}%, ${Math.round(
+          clamp01(l) * 40 + 30
+        )}%)`;
+
+        const accent = `hsl(${Math.round((hDeg + 200) % 360)}deg, 70%, 55%)`;
+
+        resolve({ primary, secondary, accent });
+      } catch (err) {
+        // CORS or canvas taint will land here
+        reject(err);
+      }
+    };
+
+    img.onerror = (err) => {
+      reject(err);
+    };
+
+    img.src = url;
+  });
 }
 
 function adaptSongs(data) {
@@ -811,6 +913,9 @@ function MusicApp({ user, onLogout }) {
   const ytPlayerRef = useRef(null);
   const [showCanvas, setShowCanvas] = useState(false);
   const ytCanvasRef = useRef(null);
+  const [theme, setTheme] = useState(
+    getHashThemeForTrack(null) // default fallback
+  );
   const [avatarUrl, setAvatarUrl] = useState(user?.avatar || null);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [profileName, setProfileName] = useState(user?.name || "Music Lover");
@@ -1362,6 +1467,41 @@ function MusicApp({ user, onLogout }) {
       setDownloadedTracks([]);
     }
   }, []);
+  useEffect(() => {
+    if (!currentTrack) {
+      setTheme(getHashThemeForTrack(null));
+      return;
+    }
+
+    const fallback = getHashThemeForTrack(currentTrack);
+    const imgUrl =
+      currentTrack.image_url ||
+      currentTrack.image ||
+      currentTrack.cover ||
+      null;
+
+    // if no image, just use fallback
+    if (!imgUrl) {
+      setTheme(fallback);
+      return;
+    }
+
+    let cancelled = false;
+
+    extractThemeFromImage(imgUrl)
+      .then((imgTheme) => {
+        if (cancelled) return;
+        setTheme(imgTheme);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTheme(fallback);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentTrack]);
 
   // online / offline watcher
   useEffect(() => {
@@ -3254,7 +3394,6 @@ function MusicApp({ user, onLogout }) {
     await loadFull(engine);
   };
 
-  const theme = getThemeForTrack(currentTrack);
   // 🎨 Premium neon visualizer with reflection (optimized)
   useEffect(() => {
     const canvas = visualizerCanvasRef.current;
@@ -3315,7 +3454,7 @@ function MusicApp({ user, onLogout }) {
         height * 0.6,
         height * 0.9
       );
-      glow.addColorStop(0, `${theme.secondary}33`);
+      glow.addColorStop(0, theme.secondary);
       glow.addColorStop(1, "rgba(0,0,0,0)");
       ctx.fillStyle = glow;
       ctx.fillRect(0, 0, width, height);
@@ -3399,7 +3538,7 @@ function MusicApp({ user, onLogout }) {
           const refBottom = baseY + reflectHeight;
 
           const refGrad = ctx.createLinearGradient(0, refTop, 0, refBottom);
-          refGrad.addColorStop(0, `${theme.primary}AA`);
+          refGrad.addColorStop(0, theme.primary);
           refGrad.addColorStop(1, "rgba(0,0,0,0)");
 
           ctx.globalAlpha = 0.25;
@@ -4232,7 +4371,7 @@ function MusicApp({ user, onLogout }) {
                       isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
                     }`}
                     style={{
-                      boxShadow: `0 0 90px ${theme.primary}aa`,
+                      boxShadow: `0 0 30px ${theme.secondary}, 0 0 10px ${theme.primary}`,
                       border: "3px solid rgba(255,255,255,0.25)",
                     }}
                   />
@@ -4276,8 +4415,8 @@ function MusicApp({ user, onLogout }) {
                     <div
                       className="absolute inset-0 rounded-full"
                       style={{
-                        boxShadow: `0 0 140px ${theme.primary}aa`,
-                        border: `2px solid ${theme.primary}55`,
+                        boxShadow: `0 0 40px ${theme.primary}`,
+                        border: `2px solid ${theme.primary}`,
                         animation: isPlaying
                           ? "beat 1.1s ease-in-out infinite"
                           : "none",
@@ -4285,15 +4424,25 @@ function MusicApp({ user, onLogout }) {
                     />
                     <div
                       className="absolute inset-6 rounded-full"
-                      style={{ border: `1px solid ${theme.secondary}99` }}
+                      style={{ border: `1px solid ${theme.secondary}` }}
                     />
                     <div
                       className="relative w-32 h-32 md:w-40 md:h-40 rounded-full flex flex-col items-center justify-center text-center px-4"
                       style={{
-                        background:
-                          "radial-gradient(circle, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.7) 60%, transparent 100%)",
-                        border: `1px solid ${theme.primary}cc`,
-                        boxShadow: `0 0 60px ${theme.secondary}aa`,
+                        background: `
+    radial-gradient(
+      circle,
+      rgba(0,0,0,0.92) 0%,
+      rgba(0,0,0,0.75) 50%,
+      transparent 100%
+    )
+  `,
+                        border: `2px solid ${theme.primary}`,
+                        boxShadow: `
+    0 0 35px ${theme.secondary},
+    0 0 20px ${theme.primary},
+    inset 0 0 18px rgba(255,255,255,0.05)
+  `,
                       }}
                     >
                       <p className="text-[10px] md:text-xs uppercase tracking-[0.25em] mb-1 text-gray-300">
@@ -4375,8 +4524,8 @@ function MusicApp({ user, onLogout }) {
                         : "hover:opacity-90")
                     }
                     style={{
-                      background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
-                      boxShadow: `0 0 80px ${theme.primary}aa`,
+                      background: `radial-gradient(circle at top, ${theme.primary}, transparent)`,
+                      boxShadow: `0 0 40px ${theme.primary}`,
                     }}
                   >
                     {isPlaying ? <Pause size={30} /> : <Play size={30} />}
