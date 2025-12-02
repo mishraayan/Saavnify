@@ -219,14 +219,28 @@ async function logoutTvPairing(code, userId = null) {
 }
 
 // phone sends remote command to TV
+// returns inserted row on success or throws error
 async function sendTvCommand(code, command, payload = {}) {
-  const { error } = await supabase.from("tv_controls").insert([
-    { tv_code: code, command, payload }
-  ]);
+  try {
+    const { data, error } = await supabase
+      .from("tv_controls")
+      .insert([{ tv_code: code, command, payload }])
+      .select()
+      .single();
 
-  if (error) throw error;
-  return true;
+    if (error) {
+      console.error("[sendTvCommand] supabase error:", error);
+      throw error;
+    }
+
+    console.log("[sendTvCommand] inserted:", data);
+    return data;
+  } catch (err) {
+    console.error("[sendTvCommand] exception:", err);
+    throw err;
+  }
 }
+
 // --- QR scanner modal & manual entry (uses imported hooks: useState, useRef, useEffect) ---
 
 function ManualCodeEntry({ onDetected, onClose }) {
@@ -403,23 +417,39 @@ function TVPairingScreen({ onOpenPlayer, onPlayPause, audioRef }) {
         table: "tv_controls",
         filter: `tv_code=eq.${code}`,
       },
-      async (payload) => {
-        const row = payload.new;
-        const cmd = row.command;
-        const p = row.payload || {};
+     async (payload) => {
+  console.log("[TV] received tv_control payload:", payload);
+  const row = payload.new;
+  const cmd = row.command;
+  const p = row.payload || {};
 
-        if (cmd === "open_track") {
-          onOpenPlayer && onOpenPlayer(p.track);
-        } else if (cmd === "play") {
-          onPlayPause && onPlayPause(true);
-        } else if (cmd === "pause") {
-          onPlayPause && onPlayPause(false);
-        } else if (cmd === "seek" && p.position != null) {
-          if (audioRef && audioRef.current) audioRef.current.currentTime = Number(p.position);
-        } else if (cmd === "volume" && p.level != null) {
-          if (audioRef && audioRef.current) audioRef.current.volume = Number(p.level);
-        }
-      }
+  // debug line for easier troubleshooting on TV
+  try { 
+    document.title = `Saavnify TV — cmd:${cmd}`; 
+  } catch  {
+    //
+  }
+
+  if (cmd === "open_track") {
+    console.log("[TV] open_track", p.track);
+    onOpenPlayer && onOpenPlayer(p.track);
+  } else if (cmd === "play") {
+    console.log("[TV] play");
+    onPlayPause && onPlayPause(true);
+  } else if (cmd === "pause") {
+    console.log("[TV] pause");
+    onPlayPause && onPlayPause(false);
+  } else if (cmd === "seek" && p.position != null) {
+    console.log("[TV] seek", p.position);
+    if (audioRef && audioRef.current) audioRef.current.currentTime = Number(p.position);
+  } else if (cmd === "volume" && p.level != null) {
+    console.log("[TV] volume", p.level);
+    if (audioRef && audioRef.current) audioRef.current.volume = Number(p.level);
+  } else {
+    console.warn("[TV] unknown cmd", cmd, p);
+  }
+}
+
     )
     .subscribe();
 
@@ -473,19 +503,26 @@ return () => {
     return <div className="min-h-[60vh] flex items-center justify-center text-white">Creating pairing...</div>;
   }
 
-  const pairingUrl = `${window.location.origin}${window.location.pathname}?pair=${pairCode}`;
 
   return (
     <div className="min-h-[60vh] flex flex-col items-center justify-center gap-4 text-white px-4">
       <h3 className="text-xl font-semibold">Saavnify TV — Pair with your phone</h3>
       <p className="text-sm text-gray-300">Open Saavnify on your phone and scan this QR</p>
 
-      <div className="bg-white/5 p-4 rounded-2xl">
-        <QRCodeCanvas value={pairingUrl} size={260} />
+      {/* QR — encode only the short code (easier to scan) */}
+<div className="p-3 bg-white rounded-md shadow-inner" style={{ display: "inline-block" }}>
+  {/* use the short code — pairing is by code */}
+  <QRCodeCanvas value={pairCode} size={320} />
+</div>
 
-      </div>
+{/* show both human-readable short code and fallback full URL */}
+<p className="text-xs text-gray-50 select-all mt-2">
+  Code: <span className="font-semibold ml-1">{pairCode}</span>
+</p>
+<p className="text-xs text-gray-400 select-all mt-1 break-words max-w-[80vw]">
+  Fallback URL: {`${window.location.origin}${window.location.pathname}?pair=${pairCode}`}
+</p>
 
-      <p className="text-xs text-gray-300 select-all">{pairingUrl}</p>
 
       {pairedUser ? (
         <div className="mt-3 text-center">
@@ -1775,17 +1812,24 @@ useEffect(() => {
     })();
   }
 }, [user?.id]);
+// fire-and-forget with toast/logs (non-blocking)
+function sendTvCommandNoAwait(code, command, payload = {}) {
+  sendTvCommand(code, command, payload)
+    .then((row) => console.log("[sendTvCommandNoAwait] ok", row))
+    .catch((err) => {
+      console.error("[sendTvCommandNoAwait] failed", err);
+      // show a toast or fallback to local player if needed
+    });
+}
+
 
 // wrappers to use when user clicks tracks / play-pause in app
 async function handleOpenPlayerWithTv(track) {
   const tvCode = connectedTv || localStorage.getItem("saavnify_connected_tv");
   if (tvCode) {
-    try {
-      await sendTvCommand(tvCode, "open_track", { track });
-      return;
-    } catch (err) {
-      console.error("Send open_track failed", err);
-    }
+    // non-blocking -> UI won't appear frozen
+    sendTvCommandNoAwait(tvCode, "open_track", { track });
+    return;
   }
   openPlayer(track); // fallback to local player
 }
@@ -1794,15 +1838,12 @@ async function handlePlayPauseWithTv(isCurrentlyPlaying) {
   const tvCode = connectedTv || localStorage.getItem("saavnify_connected_tv");
   if (tvCode) {
     const cmd = isCurrentlyPlaying ? "pause" : "play";
-    try {
-      await sendTvCommand(tvCode, cmd, {});
-      return;
-    } catch (err) {
-      console.error("Send play/pause failed", err);
-    }
+    sendTvCommandNoAwait(tvCode, cmd, {});
+    return;
   }
   handlePlayPause(); // fallback to local toggle
 }
+
 
   const [syncedLyrics, setSyncedLyrics] = useState(null);
   const [currentLyricIndex, setCurrentLyricIndex] = useState(0);
