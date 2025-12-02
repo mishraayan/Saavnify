@@ -869,7 +869,96 @@ function NewPlaylistForm({ onCreate }) {
     </form>
   );
 }
+function ParallaxBackground({ theme = {}, enabled = true, demo = false }) {
+  const rootRef = useRef(null);
+  const rafRef = useRef(null);
 
+  useEffect(() => {
+    if (!enabled) return;
+    const el = rootRef.current;
+    if (!el) return;
+
+    // assign demo class if requested
+    if (demo) el.classList.add("demo");
+    else el.classList.remove("demo");
+
+    // set color vars (fallback vivid for demo)
+    const p1 = theme.primary || (demo ? "#6EE7B7" : "#67e8f9");
+    const p2 = theme.secondary || (demo ? "#A78BFA" : "#a855f7");
+    const p3 = theme.accent || (demo ? "#FB923C" : "#f97316");
+
+    el.style.setProperty("--p1", p1);
+    el.style.setProperty("--p2", p2);
+    el.style.setProperty("--p3", p3);
+
+    // state for smooth motion
+    const state = { tx: 0, ty: 0, vx: 0, vy: 0, txTarget: 0, tyTarget: 0 };
+
+    const pointerSensitivity = demo ? 0.22 : 0.12;
+    const tiltSensitivity = 0.9;
+
+    const onPointer = (e) => {
+      const w = window.innerWidth, h = window.innerHeight;
+      const nx = (e.clientX / w) - 0.5;
+      const ny = (e.clientY / h) - 0.5;
+      state.txTarget = nx * (w * pointerSensitivity);
+      state.tyTarget = ny * (h * pointerSensitivity);
+      scheduleTick();
+    };
+
+    const onTilt = (ev) => {
+      const gx = ev.gamma || 0, by = ev.beta || 0;
+      state.txTarget = (gx / 90) * (window.innerWidth * (pointerSensitivity * tiltSensitivity));
+      state.tyTarget = (by / 180) * (window.innerHeight * (pointerSensitivity * tiltSensitivity));
+      scheduleTick();
+    };
+
+    const tick = () => {
+      // lerp-like smoothing
+      state.vx += (state.txTarget - state.vx) * 0.12;
+      state.vy += (state.tyTarget - state.vy) * 0.12;
+
+      // apply
+      el.style.setProperty("--tx", `${Math.round(state.vx)}`);
+      el.style.setProperty("--ty", `${Math.round(state.vy)}`);
+
+      rafRef.current = requestAnimationFrame(tick);
+    };
+
+    const scheduleTick = () => {
+      if (!rafRef.current) rafRef.current = requestAnimationFrame(tick);
+    };
+
+    window.addEventListener("pointermove", onPointer, { passive: true });
+
+    if (window.DeviceOrientationEvent && typeof window.DeviceOrientationEvent.requestPermission === "function") {
+      // iOS requires explicit permission — optional, do not auto-call here
+    } else if (window.DeviceOrientationEvent) {
+      window.addEventListener("deviceorientation", onTilt, true);
+    }
+
+    // start idle tick so demo shows movement even without pointer
+    scheduleTick();
+
+    return () => {
+      window.removeEventListener("pointermove", onPointer);
+      try { window.removeEventListener("deviceorientation", onTilt, true); } catch {
+        //
+      }
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    };
+  }, [theme, enabled, demo]);
+
+  return (
+    <div ref={rootRef} className={`parallax-bg ${demo ? "demo" : ""}`} aria-hidden>
+      <div className="parallax-layer back" />
+      <div className="parallax-layer mid" />
+      <div className="parallax-layer front" />
+      <div className="parallax-vignette" />
+    </div>
+  );
+}
 
 // ---------- MAIN MUSIC APP ----------
 function MusicApp({ user, onLogout }) {
@@ -924,6 +1013,40 @@ function MusicApp({ user, onLogout }) {
   const [isMobile, setIsMobile] = useState(
     typeof window !== "undefined" ? window.innerWidth <= 768 : false
   );
+  // COVER TILT REF
+  const coverRef = useRef(null);
+
+  // Small clamp helper
+  const clamp = (min, max, v) => Math.max(min, Math.min(max, v));
+
+  // COVER TILT EFFECT
+  useEffect(() => {
+    const el = coverRef.current;
+    if (!el) return;
+
+    let bound = (e) => {
+      const r = el.getBoundingClientRect();
+      const x = (e.clientX - r.left) / r.width - 0.5;
+      const y = (e.clientY - r.top) / r.height - 0.5;
+
+      const rx = clamp(-1, 1, -y * 7); // tilt X
+      const ry = clamp(-1, 1, x * 9); // tilt Y
+
+      el.style.transform = `rotateX(${rx}deg) rotateY(${ry}deg)`;
+    };
+
+    let leave = () => {
+      el.style.transform = "";
+    };
+
+    el.addEventListener("pointermove", bound);
+    el.addEventListener("pointerleave", leave);
+
+    return () => {
+      el.removeEventListener("pointermove", bound);
+      el.removeEventListener("pointerleave", leave);
+    };
+  }, []);
 
   useEffect(() => {
     const handleResize = () => {
@@ -2808,35 +2931,33 @@ function MusicApp({ user, onLogout }) {
         setShowPlayer(true);
         setIsPlaying(false);
 
-        
-       // Queue
-setQueue((prev) => {
-  // 🟣 1) User clicked a song from a list (home / search / playlist)
-  // listContext contains the full list → build queue from that list
-  if (listContext && listContext.length) {
-    const others = listContext.filter((t) => t.id !== track.id);
-    return [track, ...others];
-  }
+        // Queue
+        setQueue((prev) => {
+          // 🟣 1) User clicked a song from a list (home / search / playlist)
+          // listContext contains the full list → build queue from that list
+          if (listContext && listContext.length) {
+            const others = listContext.filter((t) => t.id !== track.id);
+            return [track, ...others];
+          }
 
-  const safePrev = Array.isArray(prev) ? prev : [];
+          const safePrev = Array.isArray(prev) ? prev : [];
 
-  // 🟢 2) Called from playNext / playPrev / Auto DJ with NO listContext:
-  // If the track is already in the existing queue, DON'T reorder it.
-  if (safePrev.length && safePrev.some((t) => t.id === track.id)) {
-    return safePrev;
-  }
+          // 🟢 2) Called from playNext / playPrev / Auto DJ with NO listContext:
+          // If the track is already in the existing queue, DON'T reorder it.
+          if (safePrev.length && safePrev.some((t) => t.id === track.id)) {
+            return safePrev;
+          }
 
-  // 🟡 3) Fallback: if prev is empty, build a minimal queue from tracks
-  const base = safePrev.length ? safePrev : tracks || [];
-  if (base.length) {
-    const others = base.filter((t) => t.id !== track.id);
-    return [track, ...others];
-  }
+          // 🟡 3) Fallback: if prev is empty, build a minimal queue from tracks
+          const base = safePrev.length ? safePrev : tracks || [];
+          if (base.length) {
+            const others = base.filter((t) => t.id !== track.id);
+            return [track, ...others];
+          }
 
-  // last-resort: just this one track
-  return [track];
-});
-
+          // last-resort: just this one track
+          return [track];
+        });
 
         return;
       }
@@ -2943,32 +3064,31 @@ setQueue((prev) => {
           setIsPlaying(false);
         });
 
-     setQueue((prev) => {
-  // 🟣 1) User clicked a song from a list (home / search / playlist)
-  // listContext contains the full list → build queue from that list
-  if (listContext && listContext.length) {
-    const others = listContext.filter((t) => t.id !== track.id);
-    return [track, ...others];
-  }
+      setQueue((prev) => {
+        // 🟣 1) User clicked a song from a list (home / search / playlist)
+        // listContext contains the full list → build queue from that list
+        if (listContext && listContext.length) {
+          const others = listContext.filter((t) => t.id !== track.id);
+          return [track, ...others];
+        }
 
-  // 🟢 2) Called from playNext / playPrev / Auto DJ with NO listContext:
-  // If the track is already in the existing queue, DON'T reorder it.
-  if (prev && prev.length && prev.some((t) => t.id === track.id)) {
-    return prev;
-  }
+        // 🟢 2) Called from playNext / playPrev / Auto DJ with NO listContext:
+        // If the track is already in the existing queue, DON'T reorder it.
+        if (prev && prev.length && prev.some((t) => t.id === track.id)) {
+          return prev;
+        }
 
-  // 🟡 3) Fallback: if for some reason prev is empty
-  // build a minimal queue from tracks or just the single track
-  const base = prev && prev.length ? prev : tracks;
-  if (base && base.length) {
-    const others = base.filter((t) => t.id !== track.id);
-    return [track, ...others];
-  }
+        // 🟡 3) Fallback: if for some reason prev is empty
+        // build a minimal queue from tracks or just the single track
+        const base = prev && prev.length ? prev : tracks;
+        if (base && base.length) {
+          const others = base.filter((t) => t.id !== track.id);
+          return [track, ...others];
+        }
 
-  // last-resort: just this one track
-  return [track];
-});
-
+        // last-resort: just this one track
+        return [track];
+      });
     },
     [
       inRoom,
@@ -2981,183 +3101,175 @@ setQueue((prev) => {
       user?.id,
     ]
   );
-function pickAutoDjNextTrack() {
-  if (!currentTrack) return null;
+  function pickAutoDjNextTrack() {
+    if (!currentTrack) return null;
 
-  const currentKey = trackKey(currentTrack);
-  if (!currentKey) return null;
+    const currentKey = trackKey(currentTrack);
+    if (!currentKey) return null;
 
-  const poolMap = new Map();
+    const poolMap = new Map();
 
-  const pushCandidate = (t) => {
-    if (!t) return;
-    // ignore YouTube tracks for Auto DJ (radio = Saavn only)
-    if (t.source === "yt" || t.source === "youtube") return;
+    const pushCandidate = (t) => {
+      if (!t) return;
+      // ignore YouTube tracks for Auto DJ (radio = Saavn only)
+      if (t.source === "yt" || t.source === "youtube") return;
 
-    const key = trackKey(t);
-    if (!key || key === currentKey) return; // don't re-pick same song
-    if (!poolMap.has(key)) {
-      poolMap.set(key, t);
+      const key = trackKey(t);
+      if (!key || key === currentKey) return; // don't re-pick same song
+      if (!poolMap.has(key)) {
+        poolMap.set(key, t);
+      }
+    };
+
+    // 1️⃣ Liked songs
+    (library || []).forEach(pushCandidate);
+
+    // 2️⃣ Playlist tracks
+    (playlists || []).forEach((pl) => {
+      (pl.tracks || []).forEach(pushCandidate);
+    });
+
+    // 3️⃣ Current search / home results
+    (tracks || []).forEach(pushCandidate);
+
+    // 4️⃣ 🔥 Also include current queue (important for search-based sessions)
+    (queue || []).forEach(pushCandidate);
+
+    const candidates = Array.from(poolMap.values());
+    if (!candidates.length) {
+      console.log("Auto DJ: pool is empty (no candidates).");
+      return null;
     }
-  };
 
-  // 1️⃣ Liked songs
-  (library || []).forEach(pushCandidate);
+    const baseTitleWords = (currentTrack.title || "")
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length > 2);
+    const baseArtist = (currentTrack.singers || "").toLowerCase();
+    const baseSource = currentTrack.source || "saavn";
 
-  // 2️⃣ Playlist tracks
-  (playlists || []).forEach((pl) => {
-    (pl.tracks || []).forEach(pushCandidate);
-  });
+    const scored = candidates.map((t) => {
+      let score = 0;
+      const title = (t.title || "").toLowerCase();
+      const singers = (t.singers || "").toLowerCase();
+      const source = t.source || "saavn";
+      const key = trackKey(t);
 
-  // 3️⃣ Current search / home results
-  (tracks || []).forEach(pushCandidate);
+      // same artist
+      if (singers && baseArtist) {
+        if (singers === baseArtist) score += 6;
+        else if (singers.includes(baseArtist) || baseArtist.includes(singers)) {
+          score += 4;
+        }
+      }
 
-  // 4️⃣ 🔥 Also include current queue (important for search-based sessions)
-  (queue || []).forEach(pushCandidate);
+      // title overlap
+      const words = title.split(/\s+/);
+      const overlap = words.filter((w) => baseTitleWords.includes(w));
+      score += overlap.length;
 
-  const candidates = Array.from(poolMap.values());
-  if (!candidates.length) {
-    console.log("Auto DJ: pool is empty (no candidates).");
-    return null;
+      // same source
+      if (source === baseSource) score += 2;
+
+      // small bonus if not already in queue (prefer “new” inside pool)
+      const inQueue = (queue || []).some((qt) => trackKey(qt) === key);
+      if (!inQueue) score += 1;
+
+      // randomness
+      score += Math.random() * 2;
+
+      return { track: t, score };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+
+    const picked = scored[0]?.track || null;
+    if (picked) {
+      console.log(
+        "🎧 Auto DJ picked:",
+        picked.title,
+        "-",
+        picked.singers,
+        "(pool size:",
+        candidates.length,
+        ")"
+      );
+    } else {
+      console.log("Auto DJ: scoring failed.");
+    }
+
+    return picked;
   }
 
-  const baseTitleWords = (currentTrack.title || "")
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((w) => w.length > 2);
-  const baseArtist = (currentTrack.singers || "").toLowerCase();
-  const baseSource = currentTrack.source || "saavn";
+  const playNext = useCallback(() => {
+    let next = null;
 
-  const scored = candidates.map((t) => {
-    let score = 0;
-    const title = (t.title || "").toLowerCase();
-    const singers = (t.singers || "").toLowerCase();
-    const source = t.source || "saavn";
-    const key = trackKey(t);
+    // 1️⃣ Try normal queue logic first
+    if (queue.length) {
+      if (shuffle && queue.length > 1) {
+        const randomIndex = Math.floor(Math.random() * queue.length);
+        next = queue[randomIndex];
+      } else {
+        const currentKey = currentTrack ? trackKey(currentTrack) : null;
 
-    // same artist
-    if (singers && baseArtist) {
-      if (singers === baseArtist) score += 6;
-      else if (
-        singers.includes(baseArtist) ||
-        baseArtist.includes(singers)
-      ) {
-        score += 4;
+        const currentIndex =
+          currentKey == null
+            ? -1
+            : queue.findIndex((t) => trackKey(t) === currentKey);
+
+        const nextIndex = currentIndex === -1 ? 1 : currentIndex + 1;
+        next = queue[nextIndex] || null;
       }
     }
 
-    // title overlap
-    const words = title.split(/\s+/);
-    const overlap = words.filter((w) => baseTitleWords.includes(w));
-    score += overlap.length;
-
-    // same source
-    if (source === baseSource) score += 2;
-
-    // small bonus if not already in queue (prefer “new” inside pool)
-    const inQueue =
-      (queue || []).some((qt) => trackKey(qt) === key);
-    if (!inQueue) score += 1;
-
-    // randomness
-    score += Math.random() * 2;
-
-    return { track: t, score };
-  });
-
-  scored.sort((a, b) => b.score - a.score);
-
-  const picked = scored[0]?.track || null;
-  if (picked) {
-    console.log(
-      "🎧 Auto DJ picked:",
-      picked.title,
-      "-",
-      picked.singers,
-      "(pool size:",
-      candidates.length,
-      ")"
-    );
-  } else {
-    console.log("Auto DJ: scoring failed.");
-  }
-
-  return picked;
-}
-
-
-
- const playNext = useCallback(() => {
-  let next = null;
-
-  // 1️⃣ Try normal queue logic first
-  if (queue.length) {
-    if (shuffle && queue.length > 1) {
-      const randomIndex = Math.floor(Math.random() * queue.length);
-      next = queue[randomIndex];
-    } else {
-      const currentKey = currentTrack ? trackKey(currentTrack) : null;
-
-      const currentIndex =
-        currentKey == null
-          ? -1
-          : queue.findIndex((t) => trackKey(t) === currentKey);
-
-      const nextIndex = currentIndex === -1 ? 1 : currentIndex + 1;
-      next = queue[nextIndex] || null;
+    // If we found a next track in queue → just play it
+    if (next) {
+      openPlayer(next);
+      return;
     }
-  }
 
-  // If we found a next track in queue → just play it
-  if (next) {
-    openPlayer(next);
-    return;
-  }
+    // 2️⃣ Queue ended → Auto DJ kicks in (local Saavn only)
+    if (!currentTrack) return;
+    if (isYouTube) return; // don't Auto DJ YouTube
+    if (inRoom) return; // rooms handled via Supabase queue
 
-  // 2️⃣ Queue ended → Auto DJ kicks in (local Saavn only)
-  if (!currentTrack) return;
-  if (isYouTube) return;      // don't Auto DJ YouTube
-  if (inRoom) return;         // rooms handled via Supabase queue
+    console.log("🔥 Auto DJ triggered – no next in queue");
 
-  console.log("🔥 Auto DJ triggered – no next in queue");
+    const djTrack = pickAutoDjNextTrack();
+    if (!djTrack) {
+      console.log("Auto DJ: No candidate found.");
+      return;
+    }
 
-  const djTrack = pickAutoDjNextTrack();
-  if (!djTrack) {
-    console.log("Auto DJ: No candidate found.");
-    return;
-  }
+    console.log("🎧 Auto DJ selected:", djTrack.title, "-", djTrack.singers);
 
-  console.log("🎧 Auto DJ selected:", djTrack.title, "-", djTrack.singers);
+    // Play the Auto DJ choice
+    openPlayer(djTrack);
 
-  // Play the Auto DJ choice
-  openPlayer(djTrack);
+    // Refresh local queue so radio keeps feeling endless
+    setQueue((prev) => {
+      const currentKey = currentTrack ? trackKey(currentTrack) : null;
+      const djKey = trackKey(djTrack);
 
-  // Refresh local queue so radio keeps feeling endless
-  setQueue((prev) => {
-    const currentKey = currentTrack ? trackKey(currentTrack) : null;
-    const djKey = trackKey(djTrack);
+      const base = prev && prev.length ? prev : tracks || [];
 
-    const base = prev && prev.length ? prev : tracks || [];
+      const others = base.filter((t) => {
+        const key = trackKey(t);
+        return key !== currentKey && key !== djKey;
+      });
 
-    const others = base.filter((t) => {
-      const key = trackKey(t);
-      return key !== currentKey && key !== djKey;
+      return [djTrack, ...others];
     });
-
-    return [djTrack, ...others];
-  });
-}, [
-  queue,
-  shuffle,
-  currentTrack,
-  openPlayer,
-  inRoom,
-  isYouTube,
-  tracks,
-  setQueue,
-]);
-
-
+  }, [
+    queue,
+    shuffle,
+    currentTrack,
+    openPlayer,
+    inRoom,
+    isYouTube,
+    tracks,
+    setQueue,
+  ]);
 
   const playPrev = useCallback(() => {
     if (!queue.length) return;
@@ -4472,7 +4584,10 @@ function pickAutoDjNextTrack() {
 
       {/* FULL PLAYER */}
       {showPlayer && currentTrack && (
-        <div className="fixed inset-0 bg-black text-white overflow-y-auto relative">
+       <div className="fixed inset-0 bg-black/30 text-white overflow-y-auto relative">
+
+         <ParallaxBackground theme={theme} />
+
           {isYouTube && showCanvas && (
             <div className="absolute inset-0 z-0 overflow-hidden">
               <div
@@ -4562,17 +4677,31 @@ function pickAutoDjNextTrack() {
                 </div>
 
                 {isYouTube || visualMode === "cover" ? (
-                  <img
-                    src={currentTrack.image_url}
-                    alt={currentTrack.title}
-                    className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
-                      isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
-                    }`}
-                    style={{
-                      boxShadow: `0 0 30px ${theme.secondary}, 0 0 10px ${theme.primary}`,
-                      border: "3px solid rgba(255,255,255,0.25)",
-                    }}
-                  />
+                  <div
+                    ref={coverRef}
+                    className="cover-tilt"
+                    style={{ transformStyle: "preserve-3d" }}
+                  >
+                    <div
+                      className="album-halo"
+                      style={{
+                        ["--theme-primary"]: theme.primary,
+                        ["--theme-secondary"]: theme.secondary,
+                      }}
+                    >
+                      <img
+                        src={currentTrack.image_url}
+                        alt={currentTrack.title}
+                        className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
+                          isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
+                        }`}
+                        style={{
+                          boxShadow: `0 0 30px ${theme.secondary}, 0 0 10px ${theme.primary}`,
+                          border: "3px solid rgba(255,255,255,0.12)",
+                        }}
+                      />
+                    </div>
+                  </div>
                 ) : (
                   // 🌌 Sphere visualizer (only for non-YT + visualMode === "sphere")
                   <div className="relative flex items-center justify-center w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem]">
@@ -4657,21 +4786,13 @@ function pickAutoDjNextTrack() {
                 )}
               </div>
 
-          <h1
-  className="nowplaying-title text-2xl md:text-4xl lg:text-5xl leading-tight text-center px-4"
->
-  {currentTrack.title}
-</h1>
+              <h1 className="nowplaying-title text-2xl md:text-4xl lg:text-5xl leading-tight text-center px-4">
+                {currentTrack.title}
+              </h1>
 
-<p
-  className="nowplaying-artist text-lg md:text-xl text-center px-4 mt-1"
->
-  {currentTrack.singers}
-</p>
-
-
-
-
+              <p className="nowplaying-artist text-lg md:text-xl text-center px-4 mt-1">
+                {currentTrack.singers}
+              </p>
 
               {/* Seek bar */}
               <div
@@ -4693,13 +4814,10 @@ function pickAutoDjNextTrack() {
               />
 
               {/* CONTROLS FIRST */}
-              <div
-                className={`sticky top-0 pt-6 pb-4 flex flex-col items-center ${
-                  isYouTube && showCanvas
-                    ? "bg-transparent" // 👈 no big black rectangle on canvas
-                    : "bg-black/80 backdrop-blur-lg" // 👈 old style for normal mode
-                }`}
-              >
+           <div
+  className={`sticky top-0 pt-6 pb-4 flex flex-col items-center bg-transparent`}
+>
+
                 {/* Main transport controls */}
                 <div className="flex items-center justify-center gap-6 text-2xl md:text-3xl">
                   {/* ⏮ PREV */}
@@ -4719,22 +4837,35 @@ function pickAutoDjNextTrack() {
                   </button>
 
                   {/* ▶ / ⏸ – room uses handleRoomPlayPause, local uses handlePlayPause */}
-                  <button
-                    onClick={inRoom ? handleRoomPlayPause : handlePlayPause}
-                    disabled={inRoom && !isRoomOwner}
-                    className={
-                      "w-14 md:w-16 h-14 md:h-16 rounded-full flex items-center justify-center shadow-xl transition " +
-                      (inRoom && !isRoomOwner
-                        ? "opacity-40 cursor-not-allowed"
-                        : "hover:opacity-90")
-                    }
-                    style={{
-                      background: `radial-gradient(circle at top, ${theme.primary}, transparent)`,
-                      boxShadow: `0 0 40px ${theme.primary}`,
-                    }}
+                  <div
+                    className={`play-btn-wrap ${isPlaying ? "playing" : ""}`}
+                    style={{ ["--theme-primary"]: theme.primary }}
                   >
-                    {isPlaying ? <Pause size={30} /> : <Play size={30} />}
-                  </button>
+                    {/* Glow ripple below button */}
+                    <div
+                      className="play-ripple"
+                      style={{
+                        background: `radial-gradient(circle, ${theme.primary} 0%, transparent 40%)`,
+                      }}
+                    />
+
+                    <button
+                      onClick={inRoom ? handleRoomPlayPause : handlePlayPause}
+                      disabled={inRoom && !isRoomOwner}
+                      className={
+                        "w-14 md:w-16 h-14 md:h-16 rounded-full flex items-center justify-center shadow-xl transition " +
+                        (inRoom && !isRoomOwner
+                          ? "opacity-40 cursor-not-allowed"
+                          : "hover:opacity-90")
+                      }
+                      style={{
+                        background: `radial-gradient(circle at top, ${theme.primary}, transparent)`,
+                        boxShadow: `0 0 40px ${theme.primary}`,
+                      }}
+                    >
+                      {isPlaying ? <Pause size={30} /> : <Play size={30} />}
+                    </button>
+                  </div>
 
                   {/* ⏭ NEXT */}
                   <button
@@ -4855,7 +4986,7 @@ function pickAutoDjNextTrack() {
                         ref={i === currentLyricIndex ? activeLyricRef : null}
                         className={`my-2 transition-all duration-300 ${
                           i === currentLyricIndex
-                            ? "text-cyan-300 font-bold text-lg"
+                            ? "lyric-active animate"
                             : i === currentLyricIndex - 1 ||
                               i === currentLyricIndex + 1
                             ? "text-gray-300"
