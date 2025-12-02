@@ -4487,22 +4487,7 @@ navigator.mediaSession.setActionHandler("pause", () => { handlePlayPauseWithTv(i
 
     return library.filter((t) => !playlistSongIds.has(t.id));
   })();
-    // --- TV MODE CHECK (return early) ---
-  const paramsForTv = new URLSearchParams(window.location.search);
-  const tvMode = paramsForTv.get("tv") === "1";
 
-  if (tvMode) {
-    return (
-      <TVPairingScreen
-        onOpenPlayer={(track) => openPlayer(track)}
-        onPlayPause={(shouldPlay) => {
-          if (shouldPlay) audioRef.current?.play();
-          else audioRef.current?.pause();
-        }}
-        audioRef={audioRef}
-      />
-    );
-  }
 
 {/* QR Scanner modal (opened by header / profile scan buttons) */}
 {showScanner && (
@@ -5685,10 +5670,28 @@ navigator.mediaSession.setActionHandler("pause", () => { handlePlayPauseWithTv(i
 
 // ---------- ROOT APP ----------
 export default function App() {
+  // --------- Hooks & refs (must run every render, BEFORE any early returns) ---------
+  const audioRef = useRef(null);
+
+  // app state (was below originally) — keep hooks here so order is stable
   const [user, setUser] = useState(null);
   const [view, setView] = useState("loading"); // loading | landing | auth | app
   const [authMode, setAuthMode] = useState("signup");
 
+  // lightweight openPlayer & play/pause handlers for TVPairingScreen props
+  const openPlayer = useCallback((track) => {
+    // TV mode doesn't need to render the full player UI — we simply log.
+    // TV commands are handled by Supabase realtime and the TVPairingScreen,
+    // but this callback is provided so the component can call it safely.
+    console.log("openPlayer called (TV):", track);
+  }, []);
+
+  const handlePlayPause = useCallback((shouldPlay) => {
+    if (shouldPlay) audioRef.current?.play();
+    else audioRef.current?.pause();
+  }, []);
+
+  // --------- Auth initialization (unchanged, just moved above tvMode) ---------
   useEffect(() => {
     let authSub;
 
@@ -5773,6 +5776,20 @@ export default function App() {
       if (authSub) authSub.unsubscribe();
     };
   }, []);
+
+  // --- TV MODE CHECK (return early) ---
+  const paramsForTv = new URLSearchParams(window.location.search);
+  const tvMode = paramsForTv.get("tv") === "1";
+
+  if (tvMode) {
+    return (
+      <TVPairingScreen
+        onOpenPlayer={openPlayer}
+        onPlayPause={handlePlayPause}
+        audioRef={audioRef}
+      />
+    );
+  }
 
   // LOADING SCREEN WHILE WE ASK SUPABASE
   if (view === "loading") {
