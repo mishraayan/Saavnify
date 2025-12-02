@@ -531,9 +531,73 @@ function LandingScreen({ onGetStarted }) {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
+  // ⭐ Full TV Detection (Xiaomi + AndroidTV + FireTV + Samsung + LG + Sony)
+  function isProbablyTv() {
+    if (typeof window === "undefined") return false;
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("tv") === "1") return true; // Explicit override
+
+    const ua = (navigator.userAgent || "").toLowerCase();
+
+    // Known TV indicators / OS / browsers
+    const tvIndicators = [
+      "smart-tv",
+      "smarttv",
+      "hbbtv",
+      "appletv",
+      "tizen",       // Samsung TV
+      "webos",       // LG TV
+      "googletv",
+      "android tv",
+      "androidtv",
+      "aftss", "aftt", "aftb",   // Amazon FireTV
+      "mitv",       // Xiaomi TV
+      "mibox",
+      "mi tv",
+      "miui tv",
+      "patchwall",  // Xiaomi OS
+      "xiaomi",
+      "shield",     // Nvidia Shield
+      "bravia",     // Sony TV
+      "hisense",
+      "tcl",
+      "roku"
+    ];
+
+    if (tvIndicators.some((str) => ua.includes(str))) {
+      return true;
+    }
+
+    // Fallback heuristic for unknown TVs:
+    // Extremely large screen & no touch input
+    const minTvWidth = 1300;
+    const largeScreen = window.innerWidth >= minTvWidth;
+
+    const hasTouch =
+      (navigator.maxTouchPoints && navigator.maxTouchPoints > 0) ||
+      "ontouchstart" in window;
+
+    return largeScreen && !hasTouch;
+  }
+
+  // 🎬 Handle Get Started click
+  function handleGetStarted() {
+    if (isProbablyTv()) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("tv", "1");
+      window.location.href = url.toString(); // Force reload into TV pairing mode
+      return;
+    }
+
+    // Normal desktop/mobile flow
+    onGetStarted && onGetStarted();
+  }
+
   return (
     <div className="min-h-screen relative overflow-hidden bg-gradient-to-br from-indigo-900 via-black to-purple-900 flex items-center justify-center">
-      {/* ✨ Disable particles on mobile to avoid Aw Snap crashes */}
+      
+      {/* Disable particles on small devices */}
       {!isMobile && (
         <Particles
           init={async (e) => await loadFull(e)}
@@ -555,20 +619,25 @@ function LandingScreen({ onGetStarted }) {
         <h1 className="text-4xl md:text-6xl font-black bg-gradient-to-r from-pink-500 via-cyan-400 to-emerald-400 bg-clip-text text-transparent mb-6">
           Welcome to Saavnify ULTRA
         </h1>
+
         <p className="text-gray-200 max-w-xl mx-auto mb-8">
           Stream, search and vibe with a futuristic music experience powered by
           Saavnify&apos;s smart engine.
         </p>
+
         <button
-          onClick={onGetStarted}
+          onClick={handleGetStarted}
           className="px-8 py-3 bg-gradient-to-r from-green-500 to-cyan-500 rounded-full font-semibold text-lg shadow-xl hover:scale-105 transition"
         >
           Get Started
         </button>
+
       </div>
     </div>
   );
 }
+
+
 
 // ---------- AUTH SCREEN ----------
 function AuthScreen({ mode, setMode, onAuthComplete }) {
