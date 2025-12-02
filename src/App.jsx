@@ -869,6 +869,174 @@ function NewPlaylistForm({ onCreate }) {
     </form>
   );
 }
+// NowPlayingTitleArtist — uses existing hook imports (useRef, useEffect, useState)
+function useResponsiveMarquee(text, ref, enableOnSmallScreens = true) {
+  const [needsMarquee, setNeedsMarquee] = useState(false);
+  const [distancePx, setDistancePx] = useState(0);
+  const [durationSec, setDurationSec] = useState(0);
+
+  const isSmallScreen = () =>
+    typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
+
+  useEffect(() => {
+    let rafId = null;
+    let mounted = true;
+    const el = ref?.current;
+
+    const updateStateDeferred = (updater) => {
+      if (typeof window !== "undefined" && window.requestAnimationFrame) {
+        rafId = window.requestAnimationFrame(() => {
+          if (mounted) updater();
+        });
+      } else {
+        setTimeout(() => {
+          if (mounted) updater();
+        }, 0);
+      }
+    };
+
+    const measureAndUpdate = () => {
+      if (!el) {
+        updateStateDeferred(() => {
+          setNeedsMarquee(false);
+          setDistancePx(0);
+          setDurationSec(0);
+        });
+        return;
+      }
+
+      const scroll = el.scrollWidth || 0;
+      const client = el.clientWidth || 0;
+      const diff = scroll - client;
+      const enable = diff > 6 && (!enableOnSmallScreens || isSmallScreen());
+
+      if (!enable) {
+        updateStateDeferred(() => {
+          setNeedsMarquee(false);
+          setDistancePx(0);
+          setDurationSec(0);
+        });
+      } else {
+        const distance = -diff;
+        const pxPerSecond = 60; // tweak for speed: higher => faster
+        const secs = Math.max(4, Math.round((Math.abs(diff) + client) / pxPerSecond));
+        updateStateDeferred(() => {
+          setNeedsMarquee(true);
+          setDistancePx(distance);
+          setDurationSec(secs);
+        });
+      }
+    };
+
+    // initial measurement after paint
+    if (typeof window !== "undefined" && window.requestAnimationFrame) {
+      rafId = window.requestAnimationFrame(measureAndUpdate);
+    } else {
+      rafId = setTimeout(measureAndUpdate, 60);
+    }
+
+    // handle resize
+    const handleResize = () => {
+      try { if (rafId && typeof window !== "undefined") cancelAnimationFrame(rafId); } catch {
+        //
+      }
+      rafId = window.requestAnimationFrame(measureAndUpdate);
+    };
+    window.addEventListener("resize", handleResize);
+
+    // observe DOM changes that may affect width (fonts/images)
+    const mo = new MutationObserver(() => {
+      try { if (rafId && typeof window !== "undefined") cancelAnimationFrame(rafId); } catch {
+        //
+      }
+      rafId = window.requestAnimationFrame(measureAndUpdate);
+    });
+    mo.observe(document.body, { childList: true, subtree: true, attributes: true });
+
+    return () => {
+      mounted = false;
+      try { if (rafId && typeof window !== "undefined") cancelAnimationFrame(rafId); } catch {
+        //
+      }
+      window.removeEventListener("resize", handleResize);
+      mo.disconnect();
+    };
+  }, [text, ref, enableOnSmallScreens]);
+
+  return { needsMarquee, distancePx, durationSec };
+}
+
+export function NowPlayingTitleArtist({ title = "", artist = "" }) {
+  const titleRef = useRef(null);
+  const artistRef = useRef(null);
+
+  const titleData = useResponsiveMarquee(title, titleRef, true); // enable only on small screens
+  const artistData = useResponsiveMarquee(artist, artistRef, true);
+
+  return (
+    <div className="nowplaying-container mt-6 h-[90px] md:h-[120px] px-4">
+      {/* TITLE */}
+      <div className="nowplaying-line-wrap">
+        {titleData.needsMarquee ? (
+          <div className="mobile-marquee-root" title={title}>
+            <div
+              ref={titleRef}
+              className="mobile-marquee-inner nowplaying-title text-2xl md:text-4xl lg:text-5xl font-black"
+              style={{
+                "--marquee-distance": `${titleData.distancePx}px`,
+                animationName: "mobile-marquee",
+                animationTimingFunction: "cubic-bezier(.2,.8,.2,1)",
+                animationDuration: `${titleData.durationSec}s`,
+                animationIterationCount: "infinite",
+                animationDelay: "0.8s",
+              }}
+            >
+              <span style={{ paddingRight: "1.5rem" }}>{title}</span>
+            </div>
+          </div>
+        ) : (
+          <h1
+            ref={titleRef}
+            className="nowplaying-truncate nowplaying-title text-2xl md:text-4xl lg:text-5xl font-black mx-auto"
+            title={title}
+          >
+            {title}
+          </h1>
+        )}
+      </div>
+
+      {/* ARTIST */}
+      <div className="nowplaying-line-wrap mt-1">
+        {artistData.needsMarquee ? (
+          <div className="mobile-marquee-root" title={artist}>
+            <div
+              ref={artistRef}
+              className="mobile-marquee-inner nowplaying-artist text-lg md:text-xl"
+              style={{
+                "--marquee-distance": `${artistData.distancePx}px`,
+                animationName: "mobile-marquee",
+                animationTimingFunction: "cubic-bezier(.2,.8,.2,1)",
+                animationDuration: `${artistData.durationSec}s`,
+                animationIterationCount: "infinite",
+                animationDelay: "1s",
+              }}
+            >
+              <span style={{ paddingRight: "1rem" }}>{artist}</span>
+            </div>
+          </div>
+        ) : (
+          <p
+            ref={artistRef}
+            className="nowplaying-truncate nowplaying-artist text-lg md:text-xl text-gray-300 mx-auto"
+            title={artist}
+          >
+            {artist}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ---------- MAIN MUSIC APP ----------
 function MusicApp({ user, onLogout }) {
@@ -4656,14 +4824,11 @@ function pickAutoDjNextTrack() {
                 )}
               </div>
 
-              <div className="mt-6 flex flex-col items-center justify-center text-center h-[90px] md:h-[120px]">
-                <h1 className="text-2xl md:text-4xl lg:text-5xl font-black leading-tight line-clamp-2 px-4">
-                  {currentTrack.title}
-                </h1>
-                <p className="text-lg md:text-xl text-gray-300 line-clamp-1 px-4 mt-1">
-                  {currentTrack.singers}
-                </p>
-              </div>
+             <NowPlayingTitleArtist
+  title={currentTrack?.title || ""}
+  artist={currentTrack?.singers || ""}
+/>
+
 
               {/* Seek bar */}
               <div
