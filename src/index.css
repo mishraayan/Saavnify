@@ -237,3 +237,51 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .parallax-bg.demo .parallax-layer { animation: none !important; }
 }
+/* Keep full player centered and stable across lyric height changes */
+.full-player-inner {
+  width: 100%;
+  max-width: 980px;        /* desktop max width — tweak if you want narrower */
+  margin: 0 auto;          /* center horizontally */
+  box-sizing: border-box;
+}
+
+/* On very small phones reduce the max width so it doesn't hug edges */
+@media (max-width: 420px) {
+  .full-player-inner {
+    max-width: 94%;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+}
+
+/* Reserve vertical space for the lyrics block so short lyrics won't collapse layout */
+.nowplaying-lyrics {
+  min-height: 120px;           /* reserve space when lyrics are short */
+  transition: min-height 220ms ease, height 220ms ease;
+  /* keep scroll behavior consistent */
+  overflow-y: auto;
+}
+
+/* Slightly smaller reserve for very small screens */
+@media (max-width: 640px) {
+  .nowplaying-lyrics {
+    min-height: 100px;
+  }
+}
+
+/* Avoid layout jumps when scrollbars appear/disappear on mobile */
+@media (max-width: 768px) {
+  .full-player-inner {
+    /* overlay keeps content width stable in many browsers */
+    overflow-y: overlay;
+  }
+}
+/* slim dark scrollbar for Up Next and related cards */
+.upnext-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.upnext-scroll::-webkit-scrollbar-track { background: transparent; }
+.upnext-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
+  border-radius: 999px;
+  border: 2px solid rgba(0,0,0,0.25);
+}
+.upnext-scroll { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.08) transparent; }
