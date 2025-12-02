@@ -49,3 +49,191 @@ body {
   color: transparent;
   opacity: 0.9;
 }
+/* album halo + slow pulse */
+.album-halo {
+  position: relative;
+  display: inline-block;
+  border-radius: 9999px;
+  padding: 8px; /* space for halo */
+}
+
+.album-halo::before {
+  content: "";
+  position: absolute;
+  inset: -8px;
+  border-radius: 9999px;
+  background: radial-gradient(closest-side, rgba(255,255,255,0.06), transparent 45%);
+  filter: blur(18px);
+  z-index: -2;
+}
+
+.album-halo::after {
+  content: "";
+  position: absolute;
+  inset: -18px;
+  border-radius: 9999px;
+  z-index: -3;
+  background: radial-gradient(circle at 30% 30%, var(--theme-primary, #67e8f9), transparent 20%),
+              radial-gradient(circle at 70% 70%, var(--theme-secondary, #a855f7), transparent 20%);
+  opacity: 0.7;
+  filter: blur(36px) saturate(1.2);
+  animation: halo-pulse 3.8s ease-in-out infinite;
+}
+
+@keyframes halo-pulse {
+  0%   { transform: scale(0.98); opacity: 0.85; }
+  50%  { transform: scale(1.03); opacity: 1; }
+  100% { transform: scale(0.98); opacity: 0.85; }
+}
+.play-btn-wrap {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+}
+
+.play-ripple {
+  position: absolute;
+  width: 160%;
+  height: 160%;
+  border-radius: 9999px;
+  z-index: -1;
+  filter: blur(22px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease;
+}
+
+.play-btn-wrap.playing .play-ripple {
+  opacity: 0.9;
+  animation: rippleWave 1.6s ease-out infinite;
+}
+
+@keyframes rippleWave {
+  0% {
+    transform: scale(0.85);
+    opacity: 0.85;
+  }
+  60% {
+    transform: scale(1.45);
+    opacity: 0.18;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+.cover-tilt {
+  transform-style: preserve-3d;
+  transition: transform 220ms cubic-bezier(.2,.9,.2,1), box-shadow 220ms;
+  will-change: transform;
+  cursor: grab;
+}
+.cover-tilt:active { cursor: grabbing; }
+
+/* small press pop when tapped (mobile) */
+.cover-tilt.pressed {
+  transform: translateZ(8px) scale(0.995);
+}
+.cover-tilt {
+  transition: transform 0.18s ease-out;
+  will-change: transform;
+}
+.lyric-active {
+  position: relative;
+  color: #67e8f9;
+  font-weight: 700;
+  font-size: 1.15rem;
+  transform-origin: left center;
+}
+
+.lyric-active::after {
+  content: "";
+  position: absolute;
+  left: 50%;         /* CENTERED under text */
+  transform: translateX(-50%);
+  bottom: -6px;
+  width: 60%;        /* REDUCE bar size */
+  height: 10px;
+  border-radius: 10px;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(103, 232, 249, 0.55),
+    transparent 60%
+  );
+  filter: blur(12px);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+
+@keyframes lyric-breathe {
+  0% { transform: translateY(0) scale(1); opacity: 1; }
+  50% { transform: translateY(-2px) scale(1.02); opacity: 0.98; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+.animate {
+  animation: lyric-breathe 1.2s ease-in-out infinite;
+}
+.lyric-active::after {
+  animation: glowPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes glowPulse {
+  0% { opacity: 0.45; transform: translateX(-50%) scaleX(0.85); }
+  50% { opacity: 0.9; transform: translateX(-50%) scaleX(1); }
+  100% { opacity: 0.45; transform: translateX(-50%) scaleX(0.85); }
+}
+/* ==== PARALLAX (DEMO-VISIBLE) ==== */
+
+.parallax-bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: -20;
+  overflow: hidden;
+}
+
+/* layers */
+.parallax-layer {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) translate3d(0,0,0);
+  will-change: transform, opacity;
+  filter: blur(40px) contrast(1.05) saturate(1.2);
+  opacity: 0.95;
+  transition: opacity 360ms ease;
+}
+
+/* demo-visible sizes & look */
+.parallax-layer.back { width: 160%; height: 160%; border-radius: 35%; opacity: 0.6; }
+.parallax-layer.mid  { width: 120%; height: 120%; border-radius: 40%; opacity: 0.75; filter: blur(30px) saturate(1.15); }
+.parallax-layer.front{ width: 80%;  height: 80%;  border-radius: 50%; opacity: 0.9;  filter: blur(18px) saturate(1.2); }
+
+.parallax-layer.back  { background: radial-gradient(circle at 25% 30%, var(--p1, #00f) 0%, transparent 30%), radial-gradient(circle at 80% 70%, var(--p2, #f0f) 0%, transparent 20%); }
+.parallax-layer.mid   { background: radial-gradient(circle at 30% 40%, var(--p2, #f0f) 0%, transparent 30%), radial-gradient(circle at 70% 60%, var(--p1, #00f) 0%, transparent 25%); }
+.parallax-layer.front { background: radial-gradient(circle at 50% 50%, var(--p3, #ff8a00) 6%, transparent 60%); }
+
+/* use CSS vars for small translate (set by JS) */
+.parallax-layer {
+  transform: translate(-50%, -50%) translate3d(calc(var(--tx, 0px) * 0.01), calc(var(--ty, 0px) * 0.01), 0);
+}
+
+/* idle float (demo) — gentle breathing so you can see it without pointer */
+@keyframes parallax-idle {
+  0% { transform: translate(-50%,-50%) translate3d(-6px,-6px,0) scale(1); filter: blur(40px) saturate(1.1); }
+  50% { transform: translate(-50%,-50%) translate3d(6px,6px,0) scale(1.02); filter: blur(36px) saturate(1.25); }
+  100% { transform: translate(-50%,-50%) translate3d(-6px,-6px,0) scale(1); filter: blur(40px) saturate(1.1); }
+}
+.parallax-bg.demo .parallax-layer.back  { animation: parallax-idle 9s ease-in-out infinite; }
+.parallax-bg.demo .parallax-layer.mid   { animation: parallax-idle 7s ease-in-out infinite; }
+.parallax-bg.demo .parallax-layer.front { animation: parallax-idle 5s ease-in-out infinite; }
+
+.parallax-vignette { position:absolute; inset:0; background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.45) 100%); pointer-events:none; z-index:-10; }
+
+/* reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .parallax-bg.demo .parallax-layer { animation: none !important; }
+}
