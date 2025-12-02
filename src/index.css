@@ -6,143 +6,46 @@ body {
   background: linear-gradient(135deg, #0f0f0f 0%, #1a1a2e 100%);
   color: white;
 }
+
+/* heartbeat used elsewhere */
 @keyframes beat {
-  0% {
-    transform: scale(1);
-    opacity: 0.9;
-  }
-  40% {
-    transform: scale(1.08);
-    opacity: 1;
-  }
-  100% {
-    transform: scale(1);
-    opacity: 0.85;
-  }
-}
-/* === PREMIUM NOW-PLAYING ANIMATIONS === */
-
-/* Title: slide up + glow */
-@keyframes title-pop-in {
-  0% {
-    transform: translateY(12px) scale(0.97);
-    opacity: 0;
-    text-shadow: 0 0 0 rgba(0,0,0,0);
-  }
-  60% {
-    transform: translateY(0) scale(1.02);
-    opacity: 1;
-    text-shadow: 0 0 24px rgba(56, 189, 248, 0.5);
-  }
-  100% {
-    transform: translateY(0) scale(1);
-    opacity: 1;
-    text-shadow: 0 0 12px rgba(129, 140, 248, 0.65);
-  }
+  0% { transform: scale(1); opacity: 0.9; }
+  40% { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); opacity: 0.85; }
 }
 
-/* Artist: soft fade-in from bottom */
-@keyframes artist-fade-up {
-  0% {
-    transform: translateY(8px);
-    opacity: 0;
-  }
-  100% {
-    transform: translateY(0);
-    opacity: 0.9;
-  }
-}
+/* ===== PREMIUM TITLE / ARTIST GRADIENT STYLE ===== */
 
-/* Subtle shimmering gradient through the title text */
-@keyframes title-shimmer {
-  0% {
-    background-position: 0% 50%;
-  }
-  100% {
-    background-position: 200% 50%;
-  }
-}
-
-/* Utility classes (used in JSX) */
 .nowplaying-title {
   background: linear-gradient(
     120deg,
-    #e5e5e5,
     #67e8f9,
     #a855f7,
     #f97316,
-    #e5e5e5
+    #67e8f9
   );
-  background-size: 200% 200%;
+  background-size: 250% 250%;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+  font-weight: 900;
+  animation: title-shift 6s linear infinite;
+}
 
-  animation:
-    title-pop-in 0.7s ease-out forwards,
-    title-shimmer 10s linear infinite;
+@keyframes title-shift {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
 }
 
 .nowplaying-artist {
+  background: linear-gradient(
+    90deg,
+    #e2e8f0,
+    #cbd5e1,
+    #a1a1aa
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
   opacity: 0.9;
-  animation: artist-fade-up 0.5s ease-out 0.2s forwards;
 }
-
-/* Optional: for long names, keep them tidy but centered */
-.nowplaying-line {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* responsive now-playing + mobile marquee */
-.nowplaying-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  width: 100%;
-}
-
-.nowplaying-line-wrap {
-  width: 100%;
-  max-width: 95%;
-  overflow: hidden;
-  display: block;
-  position: relative;
-}
-
-.nowplaying-truncate {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* mobile marquee layout */
-.mobile-marquee-root {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  width: 100%;
-  position: relative;
-  overflow: hidden;
-}
-
-.mobile-marquee-inner {
-  display: inline-block;
-  white-space: nowrap;
-  will-change: transform;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-/* slide left: --marquee-distance is negative px value */
-@keyframes mobile-marquee {
-  0% { transform: translateX(0); }
-  10% { transform: translateX(0); } /* small pause before moving */
-  85% { transform: translateX(var(--marquee-distance, 0px)); }
-  100% { transform: translateX(var(--marquee-distance, 0px)); }
-}
-
-/* small extras */
-.nowplaying-title { line-height: 1.05; }
-.nowplaying-artist { line-height: 1.1; }
