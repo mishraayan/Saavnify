@@ -898,18 +898,24 @@ function ParallaxBackground({ theme = {}, enabled = true, demo = false }) {
     const tiltSensitivity = 0.9;
 
     const onPointer = (e) => {
-      const w = window.innerWidth, h = window.innerHeight;
-      const nx = (e.clientX / w) - 0.5;
-      const ny = (e.clientY / h) - 0.5;
+      const w = window.innerWidth,
+        h = window.innerHeight;
+      const nx = e.clientX / w - 0.5;
+      const ny = e.clientY / h - 0.5;
       state.txTarget = nx * (w * pointerSensitivity);
       state.tyTarget = ny * (h * pointerSensitivity);
       scheduleTick();
     };
 
     const onTilt = (ev) => {
-      const gx = ev.gamma || 0, by = ev.beta || 0;
-      state.txTarget = (gx / 90) * (window.innerWidth * (pointerSensitivity * tiltSensitivity));
-      state.tyTarget = (by / 180) * (window.innerHeight * (pointerSensitivity * tiltSensitivity));
+      const gx = ev.gamma || 0,
+        by = ev.beta || 0;
+      state.txTarget =
+        (gx / 90) *
+        (window.innerWidth * (pointerSensitivity * tiltSensitivity));
+      state.tyTarget =
+        (by / 180) *
+        (window.innerHeight * (pointerSensitivity * tiltSensitivity));
       scheduleTick();
     };
 
@@ -931,7 +937,10 @@ function ParallaxBackground({ theme = {}, enabled = true, demo = false }) {
 
     window.addEventListener("pointermove", onPointer, { passive: true });
 
-    if (window.DeviceOrientationEvent && typeof window.DeviceOrientationEvent.requestPermission === "function") {
+    if (
+      window.DeviceOrientationEvent &&
+      typeof window.DeviceOrientationEvent.requestPermission === "function"
+    ) {
       // iOS requires explicit permission — optional, do not auto-call here
     } else if (window.DeviceOrientationEvent) {
       window.addEventListener("deviceorientation", onTilt, true);
@@ -942,7 +951,9 @@ function ParallaxBackground({ theme = {}, enabled = true, demo = false }) {
 
     return () => {
       window.removeEventListener("pointermove", onPointer);
-      try { window.removeEventListener("deviceorientation", onTilt, true); } catch {
+      try {
+        window.removeEventListener("deviceorientation", onTilt, true);
+      } catch {
         //
       }
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -951,7 +962,11 @@ function ParallaxBackground({ theme = {}, enabled = true, demo = false }) {
   }, [theme, enabled, demo]);
 
   return (
-    <div ref={rootRef} className={`parallax-bg ${demo ? "demo" : ""}`} aria-hidden>
+    <div
+      ref={rootRef}
+      className={`parallax-bg ${demo ? "demo" : ""}`}
+      aria-hidden
+    >
       <div className="parallax-layer back" />
       <div className="parallax-layer mid" />
       <div className="parallax-layer front" />
@@ -4584,9 +4599,8 @@ function MusicApp({ user, onLogout }) {
 
       {/* FULL PLAYER */}
       {showPlayer && currentTrack && (
-       <div className="fixed inset-0 bg-black/30 text-white overflow-y-auto relative">
-
-         <ParallaxBackground theme={theme} />
+        <div className="fixed inset-0 bg-black/30 text-white overflow-y-auto relative">
+          <ParallaxBackground theme={theme} />
 
           {isYouTube && showCanvas && (
             <div className="absolute inset-0 z-0 overflow-hidden">
@@ -4626,137 +4640,142 @@ function MusicApp({ user, onLogout }) {
             </div>
           )}
 
-          <div className="relative min-h-screen flex flex-col md:flex-row items-start md:items-start justify-center md:justify-between px-4 md:px-10 py-6 md:py-10 gap-8 md:gap-12">
-            <button
-              onClick={() => {
-                // For YT, just close the UI. Let the hidden #yt-player keep playing.
-                setShowPlayer(false);
-              }}
-              className="absolute top-4 right-4 md:top-8 md:right-8 z-50 hover:scale-110 transition-transform"
-            >
-              <X size={34} />
-            </button>
-
-            {isYouTube && (
+          <div className="full-player-inner px-4 md:px-10 py-6 md:py-10">
+            <div className="relative min-h-screen flex flex-col md:flex-row items-start md:items-start justify-center md:justify-between gap-8 md:gap-12">
               <button
-                onClick={() => setShowCanvas((v) => !v)}
-                className="absolute top-4 right-20 md:top-8 md:right-28 z-50 px-4 py-2 rounded-full bg-white/10 border border-white/30 text-xs md:text-sm hover:bg-white/20"
+                onClick={() => {
+                  // For YT, just close the UI. Let the hidden #yt-player keep playing.
+                  setShowPlayer(false);
+                }}
+                className="absolute top-4 right-4 md:top-8 md:right-8 z-50 hover:scale-110 transition-transform"
               >
-                {showCanvas ? "Music" : "Canvas"}
+                <X size={34} />
               </button>
-            )}
 
-            {/* LEFT: Visualizer */}
-            <div className="flex-1 flex flex-col items-center justify-start pb-10 min-h-[calc(100vh-80px)]">
-              {!isYouTube && (
+              {isYouTube && (
                 <button
-                  onClick={() => {
-                    setVisualMode((m) => (m === "cover" ? "sphere" : "cover"));
-                    window.scrollTo({ top: 0, behavior: "smooth" });
-                  }}
-                  className="absolute top-4 left-4 md:top-8 md:left-8 z-50 px-4 py-2 rounded-full bg-white/10 border border-white/30 text-xs md:text-sm hover:bg-white/20 transition"
+                  onClick={() => setShowCanvas((v) => !v)}
+                  className="absolute top-2 left-3 md:top-8 md:left-8 z-50 px-4 py-2 rounded-full bg-white/10 border border-white/30 text-xs md:text-sm hover:bg-white/20"
                 >
-                  {visualMode === "cover"
-                    ? "Sphere Visualizer"
-                    : "Show Album Cover"}
+                  {showCanvas ? "Music" : "Canvas"}
                 </button>
               )}
 
-              <div className="relative w-full flex items-center justify-center h-[260px] md:h-[340px] lg:h-[400px] overflow-hidden">
-                {/* Canvas host is ALWAYS here; visibility controlled by showCanvas */}
-                <div
-                  className={`absolute inset-0 -z-10 transition-opacity duration-500 ${
-                    isYouTube && showCanvas
-                      ? "opacity-60"
-                      : "opacity-0 pointer-events-none"
-                  }`}
-                >
-                  <div id="yt-canvas-player" className="w-full h-full" />
-                  {/* dark overlay so controls stay readable */}
-                  <div className="absolute inset-0 bg-black/40" />
-                </div>
-
-                {isYouTube || visualMode === "cover" ? (
-                  <div
-                    ref={coverRef}
-                    className="cover-tilt"
-                    style={{ transformStyle: "preserve-3d" }}
+              {/* LEFT: Visualizer */}
+              <div className="flex-1 flex flex-col items-center justify-start pb-10 min-h-[calc(100vh-80px)]">
+                {!isYouTube && (
+                  <button
+                    onClick={() => {
+                      setVisualMode((m) =>
+                        m === "cover" ? "sphere" : "cover"
+                      );
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="absolute top-2 left-3 md:top-8 md:left-8 z-50 px-4 py-2 rounded-full bg-white/10 border border-white/30 text-xs md:text-sm hover:bg-white/20 transition"
                   >
-                    <div
-                      className="album-halo"
-                      style={{
-                        ["--theme-primary"]: theme.primary,
-                        ["--theme-secondary"]: theme.secondary,
-                      }}
-                    >
-                      <img
-                        src={currentTrack.image_url}
-                        alt={currentTrack.title}
-                        className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
-                          isPlaying ? "animate-[spin_18s_linear_infinite]" : ""
-                        }`}
-                        style={{
-                          boxShadow: `0 0 30px ${theme.secondary}, 0 0 10px ${theme.primary}`,
-                          border: "3px solid rgba(255,255,255,0.12)",
-                        }}
-                      />
-                    </div>
+                    {visualMode === "cover" ? "Visualizer" : "Cover"}
+                  </button>
+                )}
+
+                <div className="relative w-full flex items-center justify-center h-[260px] md:h-[340px] lg:h-[400px] overflow-hidden">
+                  {/* Canvas host is ALWAYS here; visibility controlled by showCanvas */}
+                  <div
+                    className={`absolute inset-0 -z-10 transition-opacity duration-500 ${
+                      isYouTube && showCanvas
+                        ? "opacity-60"
+                        : "opacity-0 pointer-events-none"
+                    }`}
+                  >
+                    <div id="yt-canvas-player" className="w-full h-full" />
+                    {/* dark overlay so controls stay readable */}
+                    <div className="absolute inset-0 bg-black/40" />
                   </div>
-                ) : (
-                  // 🌌 Sphere visualizer (only for non-YT + visualMode === "sphere")
-                  <div className="relative flex items-center justify-center w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem]">
-                    {!isMobile && (
-                      <Particles
-                        init={particlesInit}
-                        className="absolute inset-0"
-                        options={{
-                          fullScreen: { enable: false },
-                          background: { color: "transparent" },
-                          fpsLimit: 60,
-                          particles: {
-                            number: {
-                              value: 260,
-                              density: { enable: true, area: 800 },
-                            },
-                            color: { value: [theme.primary, theme.secondary] },
-                            size: { value: { min: 0.5, max: 2 } },
-                            opacity: {
-                              value: 0.9,
-                              animation: {
+
+                  {isYouTube || visualMode === "cover" ? (
+                    <div
+                      ref={coverRef}
+                      className="cover-tilt"
+                      style={{ transformStyle: "preserve-3d" }}
+                    >
+                      <div
+                        className="album-halo"
+                        style={{
+                          ["--theme-primary"]: theme.primary,
+                          ["--theme-secondary"]: theme.secondary,
+                        }}
+                      >
+                        <img
+                          src={currentTrack.image_url}
+                          alt={currentTrack.title}
+                          className={`w-56 h-56 md:w-80 md:h-80 lg:w-96 lg:h-96 rounded-full object-cover ${
+                            isPlaying
+                              ? "animate-[spin_18s_linear_infinite]"
+                              : ""
+                          }`}
+                          style={{
+                            boxShadow: `0 0 30px ${theme.secondary}, 0 0 10px ${theme.primary}`,
+                            border: "3px solid rgba(255,255,255,0.12)",
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    // 🌌 Sphere visualizer (only for non-YT + visualMode === "sphere")
+                    <div className="relative flex items-center justify-center w-64 h-64 md:w-80 md:h-80 lg:w-[26rem] lg:h-[26rem]">
+                      {!isMobile && (
+                        <Particles
+                          init={particlesInit}
+                          className="absolute inset-0"
+                          options={{
+                            fullScreen: { enable: false },
+                            background: { color: "transparent" },
+                            fpsLimit: 60,
+                            particles: {
+                              number: {
+                                value: 260,
+                                density: { enable: true, area: 800 },
+                              },
+                              color: {
+                                value: [theme.primary, theme.secondary],
+                              },
+                              size: { value: { min: 0.5, max: 2 } },
+                              opacity: {
+                                value: 0.9,
+                                animation: {
+                                  enable: true,
+                                  speed: 2,
+                                  minimumValue: 0.2,
+                                },
+                              },
+                              move: {
                                 enable: true,
-                                speed: 2,
-                                minimumValue: 0.2,
+                                speed: isPlaying ? 2.3 : 0.5,
+                                direction: "none",
+                                outModes: { default: "bounce" },
+                                random: true,
                               },
                             },
-                            move: {
-                              enable: true,
-                              speed: isPlaying ? 2.3 : 0.5,
-                              direction: "none",
-                              outModes: { default: "bounce" },
-                              random: true,
-                            },
-                          },
+                          }}
+                        />
+                      )}
+                      <div
+                        className="absolute inset-0 rounded-full"
+                        style={{
+                          boxShadow: `0 0 40px ${theme.primary}`,
+                          border: `2px solid ${theme.primary}`,
+                          animation: isPlaying
+                            ? "beat 1.1s ease-in-out infinite"
+                            : "none",
                         }}
                       />
-                    )}
-                    <div
-                      className="absolute inset-0 rounded-full"
-                      style={{
-                        boxShadow: `0 0 40px ${theme.primary}`,
-                        border: `2px solid ${theme.primary}`,
-                        animation: isPlaying
-                          ? "beat 1.1s ease-in-out infinite"
-                          : "none",
-                      }}
-                    />
-                    <div
-                      className="absolute inset-6 rounded-full"
-                      style={{ border: `1px solid ${theme.secondary}` }}
-                    />
-                    <div
-                      className="relative w-32 h-32 md:w-40 md:h-40 rounded-full flex flex-col items-center justify-center text-center px-4"
-                      style={{
-                        background: `
+                      <div
+                        className="absolute inset-6 rounded-full"
+                        style={{ border: `1px solid ${theme.secondary}` }}
+                      />
+                      <div
+                        className="relative w-32 h-32 md:w-40 md:h-40 rounded-full flex flex-col items-center justify-center text-center px-4"
+                        style={{
+                          background: `
     radial-gradient(
       circle,
       rgba(0,0,0,0.92) 0%,
@@ -4764,399 +4783,439 @@ function MusicApp({ user, onLogout }) {
       transparent 100%
     )
   `,
-                        border: `2px solid ${theme.primary}`,
-                        boxShadow: `
+                          border: `2px solid ${theme.primary}`,
+                          boxShadow: `
     0 0 35px ${theme.secondary},
     0 0 20px ${theme.primary},
     inset 0 0 18px rgba(255,255,255,0.05)
   `,
-                      }}
-                    >
-                      <p className="text-[10px] md:text-xs uppercase tracking-[0.25em] mb-1 text-gray-300">
-                        Now Playing
-                      </p>
-                      <p className="text-xs md:text-sm font-semibold line-clamp-2">
-                        {currentTrack.title}
-                      </p>
-                      <p className="text-[10px] md:text-xs text-gray-300 line-clamp-2 mt-1">
-                        {currentTrack.singers}
-                      </p>
+                        }}
+                      >
+                        <p className="text-[10px] md:text-xs uppercase tracking-[0.25em] mb-1 text-gray-300">
+                          Now Playing
+                        </p>
+                        <p className="text-xs md:text-sm font-semibold line-clamp-2">
+                          {currentTrack.title}
+                        </p>
+                        <p className="text-[10px] md:text-xs text-gray-300 line-clamp-2 mt-1">
+                          {currentTrack.singers}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
 
-              <h1 className="nowplaying-title text-2xl md:text-4xl lg:text-5xl leading-tight text-center px-4">
-                {currentTrack.title}
-              </h1>
+                <h1 className="nowplaying-title text-2xl md:text-4xl lg:text-5xl leading-tight text-center px-4">
+                  {currentTrack.title}
+                </h1>
 
-              <p className="nowplaying-artist text-lg md:text-xl text-center px-4 mt-1">
-                {currentTrack.singers}
-              </p>
+                <p className="nowplaying-artist text-lg md:text-xl text-center px-4 mt-1">
+                  {currentTrack.singers}
+                </p>
 
-              {/* Seek bar */}
-              <div
-                className="w-64 md:w-80 h-2 bg-white/20 rounded-full mt-6 overflow-hidden cursor-pointer"
-                onClick={handleSeek}
-              >
+                {/* Seek bar */}
                 <div
-                  className="h-full transition-all"
-                  style={{
-                    width: `${progress}%`,
-                    background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
-                  }}
-                />
-              </div>
-              {/* 🎧 Premium visualizer (works for Saavn + YT) */}
-              <canvas
-                ref={visualizerCanvasRef}
-                className="mt-5 w-64 md:w-80 h-28 rounded-3xl bg-black/60 border border-white/10 shadow-[0_0_40px_rgba(0,0,0,0.9)]"
-              />
-
-              {/* CONTROLS FIRST */}
-           <div
-  className={`sticky top-0 pt-6 pb-4 flex flex-col items-center bg-transparent`}
->
-
-                {/* Main transport controls */}
-                <div className="flex items-center justify-center gap-6 text-2xl md:text-3xl">
-                  {/* ⏮ PREV */}
-                  <button
-                    onClick={
-                      canControlRoomPlayback ? handleSmoothPrev : undefined
-                    }
-                    disabled={!canControlRoomPlayback}
-                    className={
-                      "transition-transform " +
-                      (!canControlRoomPlayback
-                        ? "text-gray-500 opacity-40 cursor-not-allowed"
-                        : "text-gray-200 hover:scale-110")
-                    }
-                  >
-                    <SkipBack />
-                  </button>
-
-                  {/* ▶ / ⏸ – room uses handleRoomPlayPause, local uses handlePlayPause */}
+                  className="w-64 md:w-80 h-2 bg-white/20 rounded-full mt-6 overflow-hidden cursor-pointer"
+                  onClick={handleSeek}
+                >
                   <div
-                    className={`play-btn-wrap ${isPlaying ? "playing" : ""}`}
-                    style={{ ["--theme-primary"]: theme.primary }}
-                  >
-                    {/* Glow ripple below button */}
-                    <div
-                      className="play-ripple"
-                      style={{
-                        background: `radial-gradient(circle, ${theme.primary} 0%, transparent 40%)`,
-                      }}
-                    />
+                    className="h-full transition-all"
+                    style={{
+                      width: `${progress}%`,
+                      background: `linear-gradient(to right, ${theme.primary}, ${theme.secondary})`,
+                    }}
+                  />
+                </div>
+                {/* 🎧 Premium visualizer (works for Saavn + YT) */}
+                <canvas
+                  ref={visualizerCanvasRef}
+                  className="mt-5 w-64 md:w-80 h-28 rounded-3xl bg-black/60 border border-white/10 shadow-[0_0_40px_rgba(0,0,0,0.9)]"
+                />
 
+                {/* CONTROLS FIRST */}
+                <div
+                  className={`sticky top-0 pt-6 pb-4 flex flex-col items-center bg-transparent`}
+                >
+                  {/* Main transport controls */}
+                  <div className="flex items-center justify-center gap-6 text-2xl md:text-3xl">
+                    {/* ⏮ PREV */}
                     <button
-                      onClick={inRoom ? handleRoomPlayPause : handlePlayPause}
-                      disabled={inRoom && !isRoomOwner}
-                      className={
-                        "w-14 md:w-16 h-14 md:h-16 rounded-full flex items-center justify-center shadow-xl transition " +
-                        (inRoom && !isRoomOwner
-                          ? "opacity-40 cursor-not-allowed"
-                          : "hover:opacity-90")
+                      onClick={
+                        canControlRoomPlayback ? handleSmoothPrev : undefined
                       }
-                      style={{
-                        background: `radial-gradient(circle at top, ${theme.primary}, transparent)`,
-                        boxShadow: `0 0 40px ${theme.primary}`,
-                      }}
+                      disabled={!canControlRoomPlayback}
+                      className={
+                        "transition-transform " +
+                        (!canControlRoomPlayback
+                          ? "text-gray-500 opacity-40 cursor-not-allowed"
+                          : "text-gray-200 hover:scale-110")
+                      }
                     >
-                      {isPlaying ? <Pause size={30} /> : <Play size={30} />}
+                      <SkipBack />
+                    </button>
+
+                    {/* ▶ / ⏸ – room uses handleRoomPlayPause, local uses handlePlayPause */}
+                    <div
+                      className={`play-btn-wrap ${isPlaying ? "playing" : ""}`}
+                      style={{ ["--theme-primary"]: theme.primary }}
+                    >
+                      {/* Glow ripple below button */}
+                      <div
+                        className="play-ripple"
+                        style={{
+                          background: `radial-gradient(circle, ${theme.primary} 0%, transparent 40%)`,
+                        }}
+                      />
+
+                      <button
+                        onClick={inRoom ? handleRoomPlayPause : handlePlayPause}
+                        disabled={inRoom && !isRoomOwner}
+                        className={
+                          "w-14 md:w-16 h-14 md:h-16 rounded-full flex items-center justify-center shadow-xl transition " +
+                          (inRoom && !isRoomOwner
+                            ? "opacity-40 cursor-not-allowed"
+                            : "hover:opacity-90")
+                        }
+                        style={{
+                          background: `radial-gradient(circle at top, ${theme.primary}, transparent)`,
+                          boxShadow: `0 0 40px ${theme.primary}`,
+                        }}
+                      >
+                        {isPlaying ? <Pause size={30} /> : <Play size={30} />}
+                      </button>
+                    </div>
+
+                    {/* ⏭ NEXT */}
+                    <button
+                      onClick={
+                        canControlRoomPlayback ? handleSmoothNext : undefined
+                      }
+                      disabled={!canControlRoomPlayback}
+                      className={
+                        "transition-transform " +
+                        (!canControlRoomPlayback
+                          ? "text-gray-500 opacity-40 cursor-not-allowed"
+                          : "text-gray-200 hover:scale-110")
+                      }
+                    >
+                      <SkipForward />
                     </button>
                   </div>
 
-                  {/* ⏭ NEXT */}
-                  <button
-                    onClick={
-                      canControlRoomPlayback ? handleSmoothNext : undefined
-                    }
-                    disabled={!canControlRoomPlayback}
-                    className={
-                      "transition-transform " +
-                      (!canControlRoomPlayback
-                        ? "text-gray-500 opacity-40 cursor-not-allowed"
-                        : "text-gray-200 hover:scale-110")
-                    }
-                  >
-                    <SkipForward />
-                  </button>
-                </div>
-
-                {/* 🔔 Tap-to-join button for non-host room members */}
-                {inRoom && !isRoomOwner && needsRoomTap && (
-                  <button
-                    onClick={() => {
-                      const audio = audioRef.current;
-                      if (!audio) return;
-                      audio
-                        .play()
-                        .then(() => {
-                          setIsPlaying(true);
-                          setNeedsRoomTap(false);
-                        })
-                        .catch(() => {
-                          // still blocked, do nothing
-                        });
-                    }}
-                    className="mt-3 mx-auto block px-4 py-2 rounded-full bg-cyan-600/90 hover:bg-cyan-500 text-xs font-semibold"
-                  >
-                    Tap once to join room audio 🔊
-                  </button>
-                )}
-
-                {/* Secondary controls (heart, shuffle, download, repeat) */}
-                <div className="flex items-center justify-center gap-8 text-xl md:text-2xl">
-                  <button
-                    onClick={handleHeartClick}
-                    className={`transition ${
-                      isLiked(currentTrack)
-                        ? "text-rose-400"
-                        : "text-gray-300 hover:text-rose-300"
-                    }`}
-                  >
-                    <Heart
-                      size={24}
-                      fill={isLiked(currentTrack) ? "#fb7185" : "none"}
-                    />
-                  </button>
-
-                  <button
-                    onClick={() => setShuffle((s) => !s)}
-                    className={`transition ${
-                      shuffle ? "text-green-400" : "text-gray-300"
-                    }`}
-                  >
-                    <Shuffle />
-                  </button>
-
-                  <button
-                    onClick={handleDownloadCurrent}
-                    className={`transition ${
-                      isDownloaded(currentTrack)
-                        ? "text-green-400"
-                        : "text-gray-300 hover:text-cyan-400"
-                    }`}
-                  >
-                    <Download size={24} />
-                  </button>
-
-                  <button
-                    onClick={() => setRepeat((r) => !r)}
-                    className={`transition ${
-                      repeat ? "text-green-400" : "text-gray-300"
-                    }`}
-                  >
-                    <Repeat />
-                  </button>
-                </div>
-              </div>
-
-              {/* Lyrics / Karaoke */}
-              <div className="mt-5 w-full max-w-md h-52 md:h-60 bg-white/5 border border-white/10 rounded-2xl p-4 text-center flex flex-col">
-                {/* Header row */}
-                <div className="flex items-center justify-between mb-2 text-left">
-                  <p className="text-xs font-semibold text-gray-300">Lyrics</p>
-                  <button
-                    onClick={() => setFollowLyrics((v) => !v)}
-                    className={`text-[10px] px-2 py-1 rounded-full border ${
-                      followLyrics
-                        ? "border-cyan-400 text-cyan-300 bg-cyan-400/10"
-                        : "border-gray-500 text-gray-400 bg-black/30"
-                    }`}
-                  >
-                    {followLyrics ? "Auto-scroll: On" : "Auto-scroll: Off"}
-                  </button>
-                </div>
-
-                {/* Scrollable area */}
-                <div className="flex-1 overflow-y-auto">
-                  {lyricsLoading ? (
-                    <div className="flex items-center justify-center h-full gap-2">
-                      <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-                      <span className="text-gray-400 text-sm">
-                        Searching lyrics...
-                      </span>
-                    </div>
-                  ) : syncedLyrics && syncedLyrics.length > 0 ? (
-                    syncedLyrics.map((line, i) => (
-                      <p
-                        key={i}
-                        ref={i === currentLyricIndex ? activeLyricRef : null}
-                        className={`my-2 transition-all duration-300 ${
-                          i === currentLyricIndex
-                            ? "lyric-active animate"
-                            : i === currentLyricIndex - 1 ||
-                              i === currentLyricIndex + 1
-                            ? "text-gray-300"
-                            : "text-gray-500 text-sm"
-                        }`}
-                      >
-                        {line.text || "♪ ♪ ♪"}
-                      </p>
-                    ))
-                  ) : lyrics ? (
-                    lyrics.split("\n").map((l, i) => (
-                      <p key={i} className="my-1 text-gray-300">
-                        {l || "♪"}
-                      </p>
-                    ))
-                  ) : (
-                    <p className="text-gray-500">
-                      No lyrics found for this track
-                    </p>
+                  {/* 🔔 Tap-to-join button for non-host room members */}
+                  {inRoom && !isRoomOwner && needsRoomTap && (
+                    <button
+                      onClick={() => {
+                        const audio = audioRef.current;
+                        if (!audio) return;
+                        audio
+                          .play()
+                          .then(() => {
+                            setIsPlaying(true);
+                            setNeedsRoomTap(false);
+                          })
+                          .catch(() => {
+                            // still blocked, do nothing
+                          });
+                      }}
+                      className="mt-3 mx-auto block px-4 py-2 rounded-full bg-cyan-600/90 hover:bg-cyan-500 text-xs font-semibold"
+                    >
+                      Tap once to join room audio 🔊
+                    </button>
                   )}
+
+                  {/* Secondary controls (heart, shuffle, download, repeat) */}
+                  <div className="flex items-center justify-center gap-8 text-xl md:text-2xl">
+                    <button
+                      onClick={handleHeartClick}
+                      className={`transition ${
+                        isLiked(currentTrack)
+                          ? "text-rose-400"
+                          : "text-gray-300 hover:text-rose-300"
+                      }`}
+                    >
+                      <Heart
+                        size={24}
+                        fill={isLiked(currentTrack) ? "#fb7185" : "none"}
+                      />
+                    </button>
+
+                    <button
+                      onClick={() => setShuffle((s) => !s)}
+                      className={`transition ${
+                        shuffle ? "text-green-400" : "text-gray-300"
+                      }`}
+                    >
+                      <Shuffle />
+                    </button>
+
+                    <button
+                      onClick={handleDownloadCurrent}
+                      className={`transition ${
+                        isDownloaded(currentTrack)
+                          ? "text-green-400"
+                          : "text-gray-300 hover:text-cyan-400"
+                      }`}
+                    >
+                      <Download size={24} />
+                    </button>
+
+                    <button
+                      onClick={() => setRepeat((r) => !r)}
+                      className={`transition ${
+                        repeat ? "text-green-400" : "text-gray-300"
+                      }`}
+                    >
+                      <Repeat />
+                    </button>
+                  </div>
                 </div>
-              </div>
 
-              {/* Mini social / comments */}
-
-              <div className="mt-8 w-full max-w-md bg-gradient-to-br from-[#0a0a0f] to-[#0b0c12] border border-white/10 rounded-3xl p-5 pb-6 backdrop-blur-2xl shadow-[0_0_40px_#00000060]">
-                {/* Header */}
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-2xl font-black bg-gradient-to-r from-cyan-400 via-blue-300 to-purple-500 bg-clip-text text-transparent">
-                      Community Vibes
-                    </h3>
-                    <span className="relative flex">
-                      <span className="absolute inline-flex h-3 w-3 rounded-full bg-emerald-400 opacity-75 animate-ping"></span>
-                      <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-400"></span>
-                    </span>
+                {/* Lyrics / Karaoke */}
+                <div className="mt-5 w-full max-w-md h-52 md:h-60 bg-white/5 border border-white/10 rounded-2xl p-4 text-center flex flex-col">
+                  {/* Header row */}
+                  <div className="flex items-center justify-between mb-2 text-left">
+                    <p className="text-xs font-semibold text-gray-300">
+                      Lyrics
+                    </p>
+                    <button
+                      onClick={() => setFollowLyrics((v) => !v)}
+                      className={`text-[10px] px-2 py-1 rounded-full border ${
+                        followLyrics
+                          ? "border-cyan-400 text-cyan-300 bg-cyan-400/10"
+                          : "border-gray-500 text-gray-400 bg-black/30"
+                      }`}
+                    >
+                      {followLyrics ? "Auto-scroll: On" : "Auto-scroll: Off"}
+                    </button>
                   </div>
 
-                  <span className="text-xs font-semibold text-cyan-300 bg-white/10 px-3 py-1 rounded-full flex items-center gap-1">
-                    <span className="h-1.5 w-1.5 rounded-full bg-cyan-300" />
-                    {(comments[trackKey(currentTrack)] || []).length}{" "}
-                    {(comments[trackKey(currentTrack)] || []).length === 1
-                      ? "vibe"
-                      : "vibes"}
-                  </span>
+                  {/* Scrollable area */}
+                  <div className="flex-1 overflow-y-auto nowplaying-lyrics">
+                    {lyricsLoading ? (
+                      <div className="flex items-center justify-center h-full gap-2">
+                        <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                        <span className="text-gray-400 text-sm">
+                          Searching lyrics...
+                        </span>
+                      </div>
+                    ) : syncedLyrics && syncedLyrics.length > 0 ? (
+                      syncedLyrics.map((line, i) => (
+                        <p
+                          key={i}
+                          ref={i === currentLyricIndex ? activeLyricRef : null}
+                          className={`my-2 transition-all duration-300 ${
+                            i === currentLyricIndex
+                              ? "lyric-active animate"
+                              : i === currentLyricIndex - 1 ||
+                                i === currentLyricIndex + 1
+                              ? "text-gray-300"
+                              : "text-gray-500 text-sm"
+                          }`}
+                        >
+                          {line.text || "♪ ♪ ♪"}
+                        </p>
+                      ))
+                    ) : lyrics ? (
+                      lyrics.split("\n").map((l, i) => (
+                        <p key={i} className="my-1 text-gray-300">
+                          {l || "♪"}
+                        </p>
+                      ))
+                    ) : (
+                      <p className="text-gray-500">
+                        No lyrics found for this track
+                      </p>
+                    )}
+                  </div>
                 </div>
 
-                {/* Comments */}
-                <div className="space-y-3 mb-4 pr-1">
-                  {(comments[trackKey(currentTrack)] || []).length === 0 ? (
-                    <div className="text-center py-10 animate-[fadeIn_0.4s_ease-out]">
-                      <p className="text-gray-400 text-sm">No vibes yet</p>
-                      <p className="text-gray-500 text-xs mt-1">
-                        Be the first one ✨
-                      </p>
-                    </div>
-                  ) : (
-                    comments[trackKey(currentTrack)].map((c) => (
-                      <div
-                        key={c.id}
-                        className="flex gap-3 animate-[fadeInUp_0.25s_ease-out] [animation-fill-mode:backwards]"
-                      >
-                        {/* Avatar */}
-                        <div className="w-10 h-10 rounded-full overflow-hidden shadow-md bg-gradient-to-br from-pink-500 via-purple-500 to-cyan-500 flex items-center justify-center">
-                          {c.avatar_url ? (
-                            <img
-                              src={c.avatar_url}
-                              alt={c.name || "User"}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <span className="font-bold text-sm">
-                              {(c.name?.charAt(0) || "?").toUpperCase()}
-                            </span>
-                          )}
-                        </div>
+                {/* Mini social / comments */}
+                <div className="mt-8 w-full max-w-md bg-gradient-to-br from-[#0a0a0f] to-[#0b0c12] border border-white/10 rounded-3xl p-5 pb-5 backdrop-blur-2xl shadow-[0_0_40px_#00000060]">
+                  <div className="flex flex-col h-full min-h-[220px]">
+                    {/* Header */}
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-2xl font-black bg-gradient-to-r from-cyan-400 via-blue-300 to-purple-500 bg-clip-text text-transparent">
+                          Community Vibes
+                        </h3>
+                        <span className="relative flex">
+                          <span className="absolute inline-flex h-3 w-3 rounded-full bg-emerald-400 opacity-75 animate-ping"></span>
+                          <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-400"></span>
+                        </span>
+                      </div>
 
-                        {/* Bubble */}
-                        <div className="flex-1 bg-black/40 rounded-2xl px-4 py-3 border border-white/5 hover:bg-black/60 hover:border-cyan-400/30 transition-all duration-150">
-                          <div className="flex justify-between items-center">
-                            <p className="text-cyan-300 font-semibold text-sm">
-                              {c.name || "Guest"}
-                            </p>
-                            <span className="text-[10px] text-gray-500">
-                              {new Date(c.created_at).toLocaleTimeString([], {
-                                hour: "numeric",
-                                minute: "2-digit",
-                              })}
-                            </span>
-                          </div>
-                          <p className="text-gray-200 text-sm mt-1 leading-snug">
-                            {c.text}
+                      <span className="text-xs font-semibold text-cyan-300 bg-white/10 px-3 py-1 rounded-full flex items-center gap-1">
+                        <span className="h-1.5 w-1.5 rounded-full bg-cyan-300" />
+                        {(comments[trackKey(currentTrack)] || []).length}{" "}
+                        {(comments[trackKey(currentTrack)] || []).length === 1
+                          ? "vibe"
+                          : "vibes"}
+                      </span>
+                    </div>
+
+                    {/* Middle: empty-state or scrollable comments */}
+                    <div className="flex-1 flex items-center justify-center w-full">
+                      {(comments[trackKey(currentTrack)] || []).length === 0 ? (
+                        <div className="text-center py-6 animate-[fadeIn_0.4s_ease-out]">
+                          <p className="text-gray-400 text-sm">No vibes yet</p>
+                          <p className="text-gray-500 text-xs mt-1">
+                            Be the first one ✨
                           </p>
                         </div>
-                      </div>
-                    ))
-                  )}
-                </div>
+                      ) : (
+                        <div className="w-full space-y-3 pr-1 max-h-[180px] overflow-y-auto">
+                          {comments[trackKey(currentTrack)].map((c) => (
+                            <div
+                              key={c.id}
+                              className="flex gap-3 animate-[fadeInUp_0.25s_ease-out] [animation-fill-mode:backwards]"
+                            >
+                              {/* Avatar */}
+                              <div className="w-10 h-10 rounded-full overflow-hidden shadow-md bg-gradient-to-br from-pink-500 via-purple-500 to-cyan-500 flex items-center justify-center">
+                                {c.avatar_url ? (
+                                  <img
+                                    src={c.avatar_url}
+                                    alt={c.name || "User"}
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : (
+                                  <span className="font-bold text-sm">
+                                    {(c.name?.charAt(0) || "?").toUpperCase()}
+                                  </span>
+                                )}
+                              </div>
 
-                {/* 🔥 Input INSIDE the card */}
-                <div className="flex items-center gap-3 w-full">
-                  <input
-                    type="text"
-                    value={newComment}
-                    onChange={(e) => setNewComment(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        sendComment();
-                      }
-                    }}
-                    placeholder="This song hits different when..."
-                    className="flex-1 bg-black/30 rounded-2xl px-4 py-3 text-sm border border-white/10 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-400 transition-all"
-                  />
-                  <button
-                    onClick={sendComment}
-                    disabled={!newComment.trim()}
-                    className="px-6 py-2 rounded-2xl text-sm font-semibold text-white bg-gradient-to-r from-cyan-500 to-purple-600 shadow-lg hover:scale-105 active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    Send
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* RIGHT: QUEUE LIST (UP NEXT) */}
-            <div className="w-full md:w-72 lg:w-80 bg-black/60 border border-white/10 rounded-3xl p-4 md:p-5 backdrop-blur-xl mt-6 md:mt-0 max-h-[60vh] md:max-h-[70vh] overflow-y-auto">
-              <h2 className="text-lg font-semibold mb-3">Up Next</h2>
-              {upNext.length === 0 && (
-                <p className="text-sm text-gray-400">
-                  No songs in queue. Use shuffle or go back to search.
-                </p>
-              )}
-              <div className="space-y-2">
-                {upNext.map((track) => (
-                  <button
-                    key={track.id + track.title}
-                    onClick={
-                      inRoom
-                        ? isRoomOwner
-                          ? () => playQueueTrackNow(track)
-                          : undefined
-                        : () => openPlayer(track)
-                    }
-                    className={
-                      "w-full flex items-center gap-3 rounded-2xl p-2 text-left " +
-                      (inRoom
-                        ? isRoomOwner
-                          ? "bg-white/5 hover:bg-white/10"
-                          : "bg-white/5 opacity-70 cursor-not-allowed"
-                        : "bg-white/5 hover:bg-white/10")
-                    }
-                  >
-                    <img
-                      src={track.image_url}
-                      alt={track.title}
-                      className="w-10 h-10 rounded-xl object-cover"
-                    />
-                    <div className="flex-1">
-                      <p className="text-xs font-semibold truncate">
-                        {track.title}
-                      </p>
-                      <p className="text-[11px] text-gray-300 truncate">
-                        {track.singers}
-                      </p>
+                              {/* Bubble */}
+                              <div className="flex-1 bg-black/40 rounded-2xl px-4 py-3 border border-white/5 hover:bg-black/60 hover:border-cyan-400/30 transition-all duration-150">
+                                <div className="flex justify-between items-center">
+                                  <p className="text-cyan-300 font-semibold text-sm">
+                                    {c.name || "Guest"}
+                                  </p>
+                                  <span className="text-[10px] text-gray-500">
+                                    {new Date(c.created_at).toLocaleTimeString(
+                                      [],
+                                      { hour: "numeric", minute: "2-digit" }
+                                    )}
+                                  </span>
+                                </div>
+                                <p className="text-gray-200 text-sm mt-1 leading-snug">
+                                  {c.text}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </button>
-                ))}
+
+                    {/* Input anchored at bottom */}
+                    <div className="mt-4 pt-3 border-t border-white/5 flex items-center gap-3">
+                      <input
+                        type="text"
+                        value={newComment}
+                        onChange={(e) => setNewComment(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            sendComment();
+                          }
+                        }}
+                        placeholder="This song hits different when..."
+                        className="flex-1 bg-black/30 rounded-2xl px-4 py-3 text-sm border border-white/10 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-400 transition-all"
+                      />
+                      <button
+                        onClick={sendComment}
+                        disabled={!newComment.trim()}
+                        className="px-6 py-2 rounded-2xl text-sm font-semibold text-white bg-gradient-to-r from-cyan-500 to-purple-600 shadow-lg hover:scale-105 active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Send
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
+
+          {/* UP NEXT - mobile inline (shows on small screens) */}
+<div className="block md:hidden w-full max-w-md mx-auto mt-6">
+  <div className="w-full bg-black/60 border border-white/10 rounded-3xl p-4 backdrop-blur-xl max-h-[60vh] overflow-y-auto upnext-scroll" style={{ scrollbarGutter: "stable" }}>
+    <h2 className="text-lg font-semibold mb-3">Up Next</h2>
+
+    {upNext.length === 0 ? (
+      <p className="text-sm text-gray-400">No songs in queue. Use shuffle or go back to search.</p>
+    ) : (
+      <div className="space-y-2">
+        {upNext.map((track) => (
+          <button
+            key={track.id + track.title}
+            onClick={ inRoom ? (isRoomOwner ? () => playQueueTrackNow(track) : undefined) : () => openPlayer(track) }
+            className={
+              "w-full flex items-center gap-3 rounded-2xl p-2 text-left " +
+              (inRoom
+                ? isRoomOwner
+                  ? "bg-white/5 hover:bg-white/10"
+                  : "bg-white/5 opacity-70 cursor-not-allowed"
+                : "bg-white/5 hover:bg-white/10")
+            }
+          >
+            <img src={track.image_url} alt={track.title} className="w-10 h-10 rounded-xl object-cover" />
+            <div className="flex-1">
+              <p className="text-xs font-semibold truncate">{track.title}</p>
+              <p className="text-[11px] text-gray-300 truncate">{track.singers}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+    )}
+  </div>
+</div>
+
+{/* UP NEXT - fixed floating sidebar for desktop (hidden on mobile) */}
+<div
+  className="hidden md:block upnext-scroll"
+  style={{
+    position: "fixed",
+    right: 28,                 // tweak as needed
+    top: 84,                   // tweak as needed (distance from top of viewport)
+    width: 300,                // px - matches md:w-72 / lg:w-80 roughly
+    zIndex: 50,
+    maxHeight: "80vh",
+    overflowY: "auto",
+    scrollbarGutter: "stable"
+  }}
+>
+  <div className="bg-black/60 border border-white/10 rounded-3xl p-4 backdrop-blur-xl h-full">
+    <h2 className="text-lg font-semibold mb-3">Up Next</h2>
+
+    {upNext.length === 0 ? (
+      <p className="text-sm text-gray-400">No songs in queue. Use shuffle or go back to search.</p>
+    ) : (
+      <div className="space-y-2">
+        {upNext.map((track) => (
+          <button
+            key={track.id + track.title}
+            onClick={ inRoom ? (isRoomOwner ? () => playQueueTrackNow(track) : undefined) : () => openPlayer(track) }
+            className={
+              "w-full flex items-center gap-3 rounded-2xl p-2 text-left " +
+              (inRoom
+                ? isRoomOwner
+                  ? "bg-white/5 hover:bg-white/10"
+                  : "bg-white/5 opacity-70 cursor-not-allowed"
+                : "bg-white/5 hover:bg-white/10")
+            }
+          >
+            <img src={track.image_url} alt={track.title} className="w-10 h-10 rounded-xl object-cover" />
+            <div className="flex-1">
+              <p className="text-xs font-semibold truncate">{track.title}</p>
+              <p className="text-[11px] text-gray-300 truncate">{track.singers}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+    )}
+  </div>
+</div>
+
           </div>
         </div>
       )}
