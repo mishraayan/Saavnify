@@ -21,6 +21,10 @@ import {
   Share2,
   Trash2,
 } from "lucide-react";
+import { QRCodeCanvas } from "qrcode.react";
+import { v4 as uuidv4 } from "uuid";
+import { Html5Qrcode } from "html5-qrcode";
+
 
 // Your deployed JioSaavnAPI on Render
 const API = "https://rythm-1s3u.onrender.com";
@@ -171,6 +175,331 @@ function extractThemeFromImage(url) {
     img.src = url;
   });
 }
+// --- Supabase TV pairing helpers ---
+// create pairing entry (used by TV)
+async function createTvPairing(ttlSeconds = 300) {
+  const code = uuidv4().split("-")[0].toUpperCase();
+  const expires_at = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+
+  const { error } = await supabase.from("tv_pairings").insert([
+    { code, expires_at, connected: false }
+  ]);
+
+  if (error) throw error;
+  return { code, expires_at };
+}
+
+// phone claims pairing (link or QR scan)
+async function claimTvPairing(code, userId) {
+  const { data, error } = await supabase
+    .from("tv_pairings")
+    .update({
+      user_id: userId,
+      connected: true,
+      last_activity: new Date().toISOString()
+    })
+    .eq("code", code)
+    .limit(1)
+    .select("*");
+
+  if (error) throw error;
+  return data?.[0] || null;
+}
+
+// phone logs out TV
+async function logoutTvPairing(code, userId = null) {
+  const upd = { user_id: null, connected: false, last_activity: new Date().toISOString() };
+
+  const query = supabase.from("tv_pairings").update(upd).eq("code", code);
+  if (userId) query.eq("user_id", userId);
+
+  const { error } = await query;
+  if (error) throw error;
+  return true;
+}
+
+// phone sends remote command to TV
+async function sendTvCommand(code, command, payload = {}) {
+  const { error } = await supabase.from("tv_controls").insert([
+    { tv_code: code, command, payload }
+  ]);
+
+  if (error) throw error;
+  return true;
+}
+// --- QR scanner modal & manual entry (uses imported hooks: useState, useRef, useEffect) ---
+
+function ManualCodeEntry({ onDetected, onClose }) {
+  const [code, setCode] = useState("");
+  return (
+    <div className="mt-3">
+      <div className="flex gap-2">
+        <input
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          placeholder="Paste pairing URL or code"
+          className="flex-1 p-2 rounded bg-white/5 text-white text-sm"
+        />
+        <button
+          onClick={() => {
+            if (!code) return;
+            try {
+              const maybeUrl = new URL(code);
+              const pair = maybeUrl.searchParams.get("pair");
+              onDetected(pair || code);
+            } catch {
+              onDetected(code);
+            }
+            onClose();
+          }}
+          className="px-3 py-2 rounded bg-green-600 text-white text-sm"
+        >
+          Use
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function QRScannerModal({ onClose, onDetected }) {
+  const scannerRef = useRef(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const elementId = "html5qr-reader-" + Math.random().toString(36).slice(2, 9);
+    const container = document.createElement("div");
+    container.id = elementId;
+    container.style.width = "100%";
+    container.style.minHeight = "320px";
+    const parent = document.getElementById("qr-modal-root") || document.body;
+    parent.appendChild(container);
+
+    let html5QrCode = null;
+    let isMounted = true;
+
+    async function startScanner() {
+      try {
+        html5QrCode = new Html5Qrcode(elementId, { verbose: false });
+        scannerRef.current = html5QrCode;
+        const config = { fps: 10, qrbox: { width: 300, height: 300 } };
+        await html5QrCode.start(
+          { facingMode: "environment" },
+          config,
+          (decodedText) => {
+            if (!isMounted) return;
+            onDetected && onDetected(decodedText);
+            html5QrCode
+              .stop()
+              .then(() => html5QrCode.clear())
+              .catch(() => {});
+            onClose();
+          },
+          () => {
+            // scanning error callback (ignore)
+          }
+        );
+      } catch (e) {
+        console.error("QR start error", e);
+        setError(e?.message || String(e));
+      }
+    }
+
+    startScanner();
+
+    return () => {
+      isMounted = false;
+      if (scannerRef.current) {
+        scannerRef.current.stop().then(() => scannerRef.current.clear()).catch(() => {});
+      }
+      try {
+        parent.removeChild(container);
+      } catch  {
+        //
+      }
+    };
+  }, [onDetected, onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+      <div className="bg-black/90 p-4 rounded-xl max-w-md w-full text-white">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-lg">Scan TV QR</h3>
+          <button onClick={onClose} className="text-sm px-2 py-1 rounded bg-white/10">
+            Close
+          </button>
+        </div>
+
+        {error ? (
+          <div className="p-4 bg-red-900/40 rounded">
+            <p className="text-sm">Camera error: {error}</p>
+          </div>
+        ) : (
+          <div id="qr-modal-root" />
+        )}
+
+        <ManualCodeEntry onDetected={onDetected} onClose={onClose} />
+      </div>
+    </div>
+  );
+}
+function TVPairingScreen({ onOpenPlayer, onPlayPause, audioRef }) {
+  const [pairCode, setPairCode] = useState(null);
+  const [pairedUser, setPairedUser] = useState(null);
+  const subsRef = useRef([]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+     try {
+  // create pairing (uses helper that inserts into tv_pairings)
+  const { code } = await createTvPairing(300);
+  if (!mounted) return;
+  setPairCode(code);
+
+  // ---- Create a channel for pairing updates (connected/user_id changes) ----
+  const pairingChannel = supabase
+    .channel(`tv_pairing_${code}`) // unique channel name
+    .on(
+      "postgres_changes",
+      {
+        event: "UPDATE",
+        schema: "public",
+        table: "tv_pairings",
+        filter: `code=eq.${code}`,
+      },
+      (payload) => {
+        const row = payload.new;
+        if (row.connected && row.user_id) {
+          supabase
+            .from("profiles")
+            .select("name, avatar_url")
+            .eq("id", row.user_id)
+            .maybeSingle()
+            .then((res) => {
+              setPairedUser(res?.data || { id: row.user_id });
+            })
+            .catch(() => setPairedUser({ id: row.user_id }));
+        } else {
+          setPairedUser(null);
+        }
+      }
+    )
+    .subscribe(() => {
+      // optional: handle subscribe status updates
+      // console.debug("pairingChannel status", status);
+    });
+
+  subsRef.current.push(pairingChannel);
+
+  // ---- Create a channel for control commands (phone -> tv) ----
+  const controlChannel = supabase
+    .channel(`tv_controls_${code}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "INSERT",
+        schema: "public",
+        table: "tv_controls",
+        filter: `tv_code=eq.${code}`,
+      },
+      async (payload) => {
+        const row = payload.new;
+        const cmd = row.command;
+        const p = row.payload || {};
+
+        if (cmd === "open_track") {
+          onOpenPlayer && onOpenPlayer(p.track);
+        } else if (cmd === "play") {
+          onPlayPause && onPlayPause(true);
+        } else if (cmd === "pause") {
+          onPlayPause && onPlayPause(false);
+        } else if (cmd === "seek" && p.position != null) {
+          if (audioRef && audioRef.current) audioRef.current.currentTime = Number(p.position);
+        } else if (cmd === "volume" && p.level != null) {
+          if (audioRef && audioRef.current) audioRef.current.volume = Number(p.level);
+        }
+      }
+    )
+    .subscribe();
+
+  subsRef.current.push(controlChannel);
+} catch (err) {
+  console.error("TV pairing failed", err);
+}
+
+    })();
+return () => {
+  mounted = false;
+
+  // unsubscribe / remove channels created above
+  subsRef.current.forEach((ch) => {
+    try {
+      // Preferred (Supabase v2)
+      if (supabase.removeChannel) {
+        try {
+          supabase.removeChannel(ch);
+        } catch {
+          // fallback to channel.unsubscribe if removeChannel fails
+          try { ch.unsubscribe?.(); } catch {
+            //
+          }
+        }
+      } else {
+        // Older clients: try unsubscribe on the object
+        try { ch.unsubscribe?.(); } catch {
+          //
+        }
+        // older supabase-js used removeSubscription
+        try { supabase.removeSubscription?.(ch); } catch {
+          //
+        }
+      }
+    } catch  {
+      // harmless – just ensure nothing throws during cleanup
+      // console.warn("channel cleanup error", err);
+    }
+  });
+
+  // drop the ref list
+  subsRef.current = [];
+};
+
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onOpenPlayer, onPlayPause, audioRef]);
+
+  if (!pairCode) {
+    return <div className="min-h-[60vh] flex items-center justify-center text-white">Creating pairing...</div>;
+  }
+
+  const pairingUrl = `${window.location.origin}${window.location.pathname}?pair=${pairCode}`;
+
+  return (
+    <div className="min-h-[60vh] flex flex-col items-center justify-center gap-4 text-white px-4">
+      <h3 className="text-xl font-semibold">Saavnify TV — Pair with your phone</h3>
+      <p className="text-sm text-gray-300">Open Saavnify on your phone and scan this QR</p>
+
+      <div className="bg-white/5 p-4 rounded-2xl">
+        <QRCodeCanvas value={pairingUrl} size={260} />
+
+      </div>
+
+      <p className="text-xs text-gray-300 select-all">{pairingUrl}</p>
+
+      {pairedUser ? (
+        <div className="mt-3 text-center">
+          <p className="text-sm">Connected</p>
+          <p className="font-semibold">{pairedUser?.name || pairedUser?.id}</p>
+          <p className="text-xs text-gray-400">Controlled by this phone</p>
+        </div>
+      ) : (
+        <p className="text-xs text-gray-400">Waiting for phone to scan...</p>
+      )}
+    </div>
+  );
+}
+
 
 function adaptSongs(data) {
   return data
@@ -612,6 +941,23 @@ function ProfileScreen({
       email: user?.email || "",
     });
   }, [user?.id]); // 👈 removed profileName here
+  // inside ProfileScreen function (top area)
+const [profileShowScanner, setProfileShowScanner] = useState(false);
+const [profileConnectedTv, setProfileConnectedTv] = useState(() => {
+  try { return localStorage.getItem("saavnify_connected_tv"); } catch { return null; }
+});
+
+// keep in sync if other tab/parent changes localStorage
+useEffect(() => {
+  function onStorage(e) {
+    if (e.key === "saavnify_connected_tv") {
+      setProfileConnectedTv(e.newValue);
+    }
+  }
+  window.addEventListener("storage", onStorage);
+  return () => window.removeEventListener("storage", onStorage);
+}, []);
+
 
   const trimmedName = (profileName || "").trim();
   const baselineName = (editBaseline.name || "").trim();
@@ -713,6 +1059,45 @@ function ProfileScreen({
                   Edit profile
                 </button>
               </div>
+                    {/* ---------- TV Pairing (Desktop inside profile info) ---------- */}
+      <div className="mt-3 hidden md:flex items-center gap-3">
+        <button
+  onClick={() => setProfileShowScanner(true)}
+  className="hidden md:block px-3 py-1 rounded-full bg-white/10 text-sm"
+>
+  Scan TV QR
+</button>
+
+
+        {profileConnectedTv ? (
+          <>
+            <div className="text-xs text-gray-300 truncate max-w-[200px]">TV: {profileConnectedTv}</div>
+            <button
+              onClick={async () => {
+                try {
+                  await logoutTvPairing(profileConnectedTv, user?.id);
+                } catch (err) {
+                  console.error("Logout TV failed", err);
+                } finally {
+                  try { localStorage.removeItem("saavnify_connected_tv"); } catch {
+                    //
+                  }
+                  setProfileConnectedTv(null);
+                }
+              }}
+              className="px-3 py-1 rounded-full bg-red-600 text-white text-xs"
+            >
+              Logout TV
+            </button>
+          </>
+        ) : (
+          <div className="hidden md:block text-xs text-gray-400">
+  Not connected to a TV
+</div>
+
+        )}
+      </div>
+
             </>
           ) : (
             <>
@@ -782,16 +1167,50 @@ function ProfileScreen({
               </button>
             )}
 
-            {/* Logout */}
-            {onLogout && (
-              <button
-                type="button"
-                onClick={onLogout}
-                className="w-full px-4 py-2 rounded-full bg-red-500/80 hover:bg-red-500 text-sm font-semibold"
-              >
-                Logout
-              </button>
-            )}
+            {/* Logout + Scan (mobile) */}
+{onLogout && (
+  <>
+    <button
+      type="button"
+      onClick={() => setProfileShowScanner(true)}
+      className="w-full px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-sm font-semibold"
+    >
+      Scan TV QR
+    </button>
+
+    <div className="flex gap-2 mt-2">
+      <button
+        type="button"
+        onClick={onLogout}
+        className="flex-1 px-4 py-2 rounded-full bg-red-500/80 hover:bg-red-500 text-sm font-semibold"
+      >
+        Logout
+      </button>
+
+      {profileConnectedTv && (
+        <button
+          type="button"
+          onClick={async () => {
+            try {
+              await logoutTvPairing(profileConnectedTv, user?.id);
+            } catch (err) {
+              console.error("Logout TV failed", err);
+            } finally {
+              try { localStorage.removeItem("saavnify_connected_tv"); } catch {
+                //
+              }
+              setProfileConnectedTv(null);
+            }
+          }}
+          className="px-3 py-2 rounded-full bg-red-700 text-white text-sm"
+        >
+          Logout TV
+        </button>
+      )}
+    </div>
+  </>
+)}
+
           </>
         ) : (
           <>
@@ -838,6 +1257,36 @@ function ProfileScreen({
           </>
         )}
       </div>
+      {profileShowScanner && (
+  <QRScannerModal
+    onClose={() => setProfileShowScanner(false)}
+    onDetected={async (scannedText) => {
+      try {
+        const url = new URL(scannedText);
+        const code = url.searchParams.get("pair") || scannedText;
+        await claimTvPairing(code, user?.id);
+        try { localStorage.setItem("saavnify_connected_tv", code); } catch {
+          //
+        }
+        setProfileConnectedTv(code);
+      } catch  {
+        // assume plain code if URL parsing failed
+        try {
+          await claimTvPairing(scannedText, user?.id);
+          try { localStorage.setItem("saavnify_connected_tv", scannedText); } catch {
+            //
+          }
+          setProfileConnectedTv(scannedText);
+        } catch (err2) {
+          console.error("Claim pairing failed", err2);
+        }
+      } finally {
+        setProfileShowScanner(false);
+      }
+    }}
+  />
+)}
+
     </div>
   );
 }
@@ -931,6 +1380,7 @@ function MusicApp({ user, onLogout }) {
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
+  
 
   useEffect(() => {
     setAvatarUrl(user?.avatar || null);
@@ -1013,6 +1463,7 @@ function MusicApp({ user, onLogout }) {
       showToast("Room", "Failed to delete room");
     }
   };
+  
   const handleEnableNotifications = () => {
     if (typeof window === "undefined") return;
 
@@ -1229,6 +1680,61 @@ function MusicApp({ user, onLogout }) {
 
   // 👇 NEW STATE
   const [lyrics, setLyrics] = useState(null);
+  // --------- TV pairing state & helpers (paste here, inside MusicApp) ----------
+const [showScanner, setShowScanner] = useState(false);
+const [connectedTv, setConnectedTv] = useState(() => {
+  try { return localStorage.getItem("saavnify_connected_tv"); } catch { return null; }
+});
+
+// Auto-claim ?pair=CODE when user is available
+useEffect(() => {
+  const params = new URLSearchParams(window.location.search);
+  const pairCode = params.get("pair");
+  if (pairCode && user?.id) {
+    (async () => {
+      try {
+        await claimTvPairing(pairCode, user.id); // helper uses global supabase
+        localStorage.setItem("saavnify_connected_tv", pairCode);
+        setConnectedTv(pairCode);
+
+        params.delete("pair");
+        const newUrl = window.location.pathname + (params.toString() ? "?" + params.toString() : "");
+        window.history.replaceState({}, "", newUrl);
+      } catch (err) {
+        console.error("Pair claim failed", err);
+      }
+    })();
+  }
+}, [user?.id]);
+
+// wrappers to use when user clicks tracks / play-pause in app
+async function handleOpenPlayerWithTv(track) {
+  const tvCode = connectedTv || localStorage.getItem("saavnify_connected_tv");
+  if (tvCode) {
+    try {
+      await sendTvCommand(tvCode, "open_track", { track });
+      return;
+    } catch (err) {
+      console.error("Send open_track failed", err);
+    }
+  }
+  openPlayer(track); // fallback to local player
+}
+
+async function handlePlayPauseWithTv(isCurrentlyPlaying) {
+  const tvCode = connectedTv || localStorage.getItem("saavnify_connected_tv");
+  if (tvCode) {
+    const cmd = isCurrentlyPlaying ? "pause" : "play";
+    try {
+      await sendTvCommand(tvCode, cmd, {});
+      return;
+    } catch (err) {
+      console.error("Send play/pause failed", err);
+    }
+  }
+  handlePlayPause(); // fallback to local toggle
+}
+
   const [syncedLyrics, setSyncedLyrics] = useState(null);
   const [currentLyricIndex, setCurrentLyricIndex] = useState(0);
 
@@ -3302,13 +3808,9 @@ function pickAutoDjNextTrack() {
       navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
 
       // 3️⃣ Wire hardware / lockscreen buttons
-      navigator.mediaSession.setActionHandler("play", () => {
-        handlePlayPause();
-      });
+     navigator.mediaSession.setActionHandler("play", () => { handlePlayPauseWithTv(isPlaying); });
+navigator.mediaSession.setActionHandler("pause", () => { handlePlayPauseWithTv(isPlaying); });
 
-      navigator.mediaSession.setActionHandler("pause", () => {
-        handlePlayPause();
-      });
 
       navigator.mediaSession.setActionHandler("previoustrack", () => {
         playPrev();
@@ -3916,6 +4418,47 @@ function pickAutoDjNextTrack() {
 
     return library.filter((t) => !playlistSongIds.has(t.id));
   })();
+    // --- TV MODE CHECK (return early) ---
+  const paramsForTv = new URLSearchParams(window.location.search);
+  const tvMode = paramsForTv.get("tv") === "1";
+
+  if (tvMode) {
+    return (
+      <TVPairingScreen
+        onOpenPlayer={(track) => openPlayer(track)}
+        onPlayPause={(shouldPlay) => {
+          if (shouldPlay) audioRef.current?.play();
+          else audioRef.current?.pause();
+        }}
+        audioRef={audioRef}
+      />
+    );
+  }
+
+{/* QR Scanner modal (opened by header / profile scan buttons) */}
+{showScanner && (
+  <QRScannerModal
+    onClose={() => setShowScanner(false)}
+    onDetected={async (scannedText) => {
+      let code = scannedText;
+      try {
+        const url = new URL(scannedText);
+        code = url.searchParams.get("pair") || scannedText;
+      } catch  { /* not a URL, keep scannedText */ }
+
+      try {
+        // claim pairing (uses your helper that calls supabase)
+        await claimTvPairing(code, user?.id);
+        localStorage.setItem("saavnify_connected_tv", code);
+        setConnectedTv(code);
+        setShowScanner(false);
+      } catch (err) {
+        console.error("Pair claim failed", err);
+        // optionally showToast("TV pairing failed")
+      }
+    }}
+  />
+)}
 
   // ---------- MAIN UI ----------
   return (
@@ -4065,6 +4608,35 @@ function pickAutoDjNextTrack() {
               >
                 Enable Notifications
               </button>
+              {/* Scan TV QR button */}
+<button
+  onClick={() => setShowScanner(true)}
+  className="px-3 py-1 rounded-full bg-white/10"
+>
+  Scan TV QR
+</button>
+
+{/* Show connected TV + logout (only when connected) */}
+{connectedTv && (
+  <div className="ml-3 flex items-center gap-3">
+    <div className="text-xs text-gray-300 truncate max-w-[120px]">TV: {connectedTv}</div>
+    <button
+      onClick={async () => {
+        try {
+          await logoutTvPairing(connectedTv, user?.id);
+          localStorage.removeItem("saavnify_connected_tv");
+          setConnectedTv(null);
+        } catch (err) {
+          console.error("Logout TV failed", err);
+        }
+      }}
+      className="px-3 py-1 rounded-full bg-red-600 text-white text-xs"
+    >
+      Logout TV
+    </button>
+  </div>
+)}
+
             </div>
           </header>
           {offline && (
@@ -4228,7 +4800,8 @@ function pickAutoDjNextTrack() {
                 {displayedTracks.map((track) => (
                   <div
                     key={track.id + track.title}
-                    onClick={() => openPlayer(track, displayedTracks)}
+                    onClick={() => handleOpenPlayerWithTv(track)}
+
                     className="cursor-pointer group relative rounded-3xl overflow-hidden shadow-2xl bg-black/40 border border-white/10 hover:-translate-y-1 hover:scale-[1.02] transition"
                   >
                     {/* existing card content */}
@@ -4335,7 +4908,7 @@ function pickAutoDjNextTrack() {
                     </button>
                     {/* ▶ / ⏸ */}
                     <button
-                      onClick={inRoom ? handleRoomPlayPause : handlePlayPause}
+                     onClick={inRoom ? handleRoomPlayPause : () => handlePlayPauseWithTv(isPlaying)}
                       disabled={inRoom && !isRoomOwner}
                       className={`w-9 h-9 rounded-full flex items-center justify-center ${
                         inRoom && !isRoomOwner
@@ -4712,7 +5285,7 @@ function pickAutoDjNextTrack() {
 
                   {/* ▶ / ⏸ – room uses handleRoomPlayPause, local uses handlePlayPause */}
                   <button
-                    onClick={inRoom ? handleRoomPlayPause : handlePlayPause}
+                   onClick={inRoom ? handleRoomPlayPause : () => handlePlayPauseWithTv(isPlaying)}
                     disabled={inRoom && !isRoomOwner}
                     className={
                       "w-14 md:w-16 h-14 md:h-16 rounded-full flex items-center justify-center shadow-xl transition " +
