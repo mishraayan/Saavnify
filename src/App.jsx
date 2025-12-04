@@ -431,7 +431,7 @@ function SearchScreen({
   setSearchQuery,
   searchSongs,
   tracks,
-  openPlayer,
+  handleUserPlayClick,
   loading,
   suggestions = [],
   showSuggestions = false,
@@ -552,7 +552,7 @@ function SearchScreen({
           {tracks.map((track) => (
             <div
               key={track.id + track.title}
-              onClick={() => openPlayer(track, tracks)}
+              onClick={() => handleUserPlayClick(track, tracks)}
               className="cursor-pointer group relative rounded-2xl overflow-hidden shadow-xl bg-black/40 border border-white/10 hover:-translate-y-1 hover:scale-[1.02] transition"
             >
               <div className="relative w-full aspect-square overflow-hidden">
@@ -2847,13 +2847,15 @@ function stopProgressTimer() {
   }, []);
 
   useEffect(() => {
-    if (!playLatestOnLoad) return;
-    if (!tracks || tracks.length === 0) return;
+  if (!playLatestOnLoad) return;
+  if (!tracks || tracks.length === 0) return;
 
-    // Auto-play first result
-    openPlayer(tracks[0]);
-    setPlayLatestOnLoad(false);
-  }, [playLatestOnLoad, tracks]);
+  // Instead of auto-starting (which is a non-user gesture), show a UI prompt
+  // so the user can tap to start playback. Example: set a state that shows a banner/button.
+    // show a small "Tap to play latest" UI in your layout
+  setPlayLatestOnLoad(false);
+}, [playLatestOnLoad, tracks]);
+
 
   const playQueueTrackNow = async (track) => {
     if (!inRoom || !roomId || !roomState) return;
@@ -3094,6 +3096,10 @@ function stopProgressTimer() {
       user?.id,
     ]
   );
+  function handleUserPlayClick(track, listContext = null) {
+  userInitiatedPlay.current = true;      // REQUIRED for autoplay/background
+  openPlayer(track, listContext);
+}
   function pickAutoDjNextTrack() {
     if (!currentTrack) return null;
 
@@ -4334,7 +4340,7 @@ function stopProgressTimer() {
                 {displayedTracks.map((track) => (
                   <div
                     key={track.id + track.title}
-                    onClick={() => openPlayer(track, displayedTracks)}
+                    onClick={() => handleUserPlayClick(track, displayedTracks)}
                     className="cursor-pointer group relative rounded-3xl overflow-hidden shadow-2xl bg-black/40 border border-white/10 hover:-translate-y-1 hover:scale-[1.02] transition"
                   >
                     {/* existing card content */}
@@ -5136,7 +5142,7 @@ function stopProgressTimer() {
                             ? isRoomOwner
                               ? () => playQueueTrackNow(track)
                               : undefined
-                            : () => openPlayer(track)
+                            : () => handleUserPlayClick(track)
                         }
                         className={
                           "w-full flex items-center gap-3 rounded-2xl p-2 text-left " +
@@ -5198,7 +5204,7 @@ function stopProgressTimer() {
                             ? isRoomOwner
                               ? () => playQueueTrackNow(track)
                               : undefined
-                            : () => openPlayer(track)
+                            : () => handleUserPlayClick(track)
                         }
                         className={
                           "w-full flex items-center gap-3 rounded-2xl p-2 text-left " +
