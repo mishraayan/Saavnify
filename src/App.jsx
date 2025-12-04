@@ -1018,6 +1018,7 @@ function MusicApp({ user, onLogout }) {
   const ytPlayerRef = useRef(null);
   const [showCanvas, setShowCanvas] = useState(false);
   const ytCanvasRef = useRef(null);
+  const userInitiatedPlay = useRef(false);
   const [theme, setTheme] = useState(
     getHashThemeForTrack(null) // default fallback
   );
@@ -1888,27 +1889,75 @@ function MusicApp({ user, onLogout }) {
       }, 500);
     }
 
+    // Add a top-level flag (in component scope)
+    let userInitiatedPlay = false; // set this true when user presses Play (one-time user gesture)
+
+    // Improved createPlayer
     function createPlayer() {
       if (cancelled) return;
 
+      // If player already exists, just load the new id (prefer load over recreate)
+      if (
+        playerInstance &&
+        typeof playerInstance.loadVideoById === "function"
+      ) {
+        try {
+          // if user initiated play, start playing; otherwise cue the video
+          if (userInitiatedPlay) {
+            playerInstance.loadVideoById(currentTrack.id);
+            playerInstance.playVideo();
+          } else {
+            playerInstance.cueVideoById(currentTrack.id);
+          }
+        } catch (err) {
+          console.warn("Failed to reuse YT player — recreating", err);
+          // fallthrough to recreate below
+          try {
+            playerInstance.destroy();
+          } catch {
+            //
+          }
+          playerInstance = null;
+        }
+        return;
+      }
+
+      // Create fresh player
       playerInstance = new window.YT.Player("yt-player", {
         videoId: currentTrack.id,
         playerVars: {
-          autoplay: 1,
+          // keep autoplay=0 and let onReady userInitiatedPlay decide
+          autoplay: 0,
           controls: 0,
           rel: 0,
           modestbranding: 1,
-          playsinline: 1, // ← YE DAAL
-          enablejsapi: 1, // ← YE BHI DAAL (already hai par confirm)
+          playsinline: 1,
+          enablejsapi: 1,
           origin: window.location.origin,
-          widget_referrer: window.location.origin, // YE ADD KAR (PWA background ke liye)
-          html5: 1, // YE ADD KAR (HTML5 mode force)
-          wmode: "transparent", // YE ADD KAR (overlay issues fix)
+          widget_referrer: window.location.origin,
+          html5: 1,
+          wmode: "transparent",
         },
         events: {
-          onReady: (e) => {
+          onReady: async (e) => {
             if (cancelled) return;
             ytPlayerRef.current = e.target;
+
+            // Ensure iframe 'allow' attributes exist (some browsers require this)
+            try {
+              const iframe = document.querySelector("#yt-player iframe");
+              if (iframe) {
+                iframe.setAttribute(
+                  "allow",
+                  "autoplay; encrypted-media; picture-in-picture"
+                );
+                iframe.setAttribute("allowfullscreen", "");
+              }
+            } catch (err) {
+              console.warn("Could not set iframe allow attrs", err);
+            }
+
+            // mediaSession is good — you already populate metadata
             if ("mediaSession" in navigator) {
               navigator.mediaSession.metadata = new MediaMetadata({
                 title: currentTrack.title,
@@ -1967,6 +2016,7 @@ function MusicApp({ user, onLogout }) {
               );
             }
 
+            // resume last time if present
             if (ytLastTime > 0) {
               try {
                 e.target.seekTo(ytLastTime, true);
@@ -1975,19 +2025,38 @@ function MusicApp({ user, onLogout }) {
               }
             }
 
-            e.target.playVideo();
-            setIsPlaying(true);
-            startProgressTimer(e.target);
+            // Play decision:
+            // - If user initiated this play (userInitiatedPlay true), start playing.
+            // - Otherwise cue to be ready (no autoplay; user can press play).
+            try {
+              if (userInitiatedPlay) {
+                // Try a normal play first
+                await tryPlay(e.target);
+              } else {
+                // prepare the player without starting playback
+                e.target.cueVideoById(currentTrack.id);
+                setIsPlaying(false);
+              }
+            } catch (err) {
+              console.warn("onReady play/cue error", err);
+            }
+
+            // start progress if playing
+            if (
+              e.target.getPlayerState &&
+              e.target.getPlayerState() === window.YT.PlayerState.PLAYING
+            ) {
+              setIsPlaying(true);
+              startProgressTimer(e.target);
+            }
           },
+
           onStateChange: (e) => {
             if (cancelled) return;
-
             const state = e.data;
 
             if (state === window.YT.PlayerState.PLAYING) {
               setIsPlaying(true);
-
-              // 🔄 keep canvas in sync → play
               if (ytCanvasRef.current) {
                 try {
                   ytCanvasRef.current.playVideo();
@@ -1995,13 +2064,12 @@ function MusicApp({ user, onLogout }) {
                   console.warn(ERR);
                 }
               }
+              startProgressTimer(e.target);
             } else if (
               state === window.YT.PlayerState.PAUSED ||
               state === window.YT.PlayerState.ENDED
             ) {
               setIsPlaying(false);
-
-              // 🔄 keep canvas in sync → pause
               if (ytCanvasRef.current) {
                 try {
                   ytCanvasRef.current.pauseVideo();
@@ -2013,15 +2081,62 @@ function MusicApp({ user, onLogout }) {
 
             if (state === window.YT.PlayerState.ENDED) {
               if (repeat) {
-                e.target.seekTo(0, true);
-                e.target.playVideo();
+                try {
+                  e.target.seekTo(0, true);
+                  e.target.playVideo();
+                } catch (err) {
+                  console.warn("Failed to loop", err);
+                }
               } else {
                 playNext();
               }
             }
           },
+
+          onError: (e) => {
+            console.warn("YT player error", e);
+            // optional: fallback to muted play (often allowed)
+            try {
+              const p = playerInstance;
+              if (p && typeof p.mute === "function") {
+                p.mute();
+                tryPlay(p).catch(() => {});
+              }
+            } catch {
+              //
+            }
+          },
         },
       });
+
+      // helper to try play, with fallback to muted play if needed
+      async function tryPlay(player) {
+        return new Promise((resolve, reject) => {
+          try {
+            const doPlay = () => {
+              try {
+                const ret = player.playVideo();
+                // playVideo() does not return a promise; so resolve immediately and rely on onStateChange
+                resolve(ret);
+              } catch (err) {
+                // try muted autoplay as fallback
+                try {
+                  player.mute();
+                  player.playVideo();
+                  resolve();
+                } catch (err2) {
+                  reject(err2 || err);
+                }
+              }
+            };
+
+            // some browsers require a short timeout after ready
+            setTimeout(doPlay, 50);
+          } catch (err) {
+            reject(err);
+          }
+        });
+      }
     }
 
     function onYouTubeIframeAPIReady() {
@@ -2920,6 +3035,7 @@ function MusicApp({ user, onLogout }) {
     async (track, listContext = null) => {
       if (!track || !track.url) return;
 
+      userInitiatedPlay.current = true;
       // 🎬 1) YOUTUBE TRACKS
       if (track.source === "yt") {
         if (inRoom) {
@@ -5136,95 +5252,140 @@ function MusicApp({ user, onLogout }) {
               </div>
             </div>
 
-          {/* UP NEXT - mobile inline (shows on small screens) */}
-<div className="block md:hidden w-full max-w-md mx-auto mt-6">
-  <div className="w-full bg-black/60 border border-white/10 rounded-3xl p-4 backdrop-blur-xl max-h-[60vh] overflow-y-auto upnext-scroll" style={{ scrollbarGutter: "stable" }}>
-    <h2 className="text-lg font-semibold mb-3">Up Next</h2>
+            {/* UP NEXT - mobile inline (shows on small screens) */}
+            <div className="block md:hidden w-full max-w-md mx-auto mt-6">
+              <div
+                className="w-full bg-black/60 border border-white/10 rounded-3xl p-4 backdrop-blur-xl max-h-[60vh] overflow-y-auto upnext-scroll"
+                style={{ scrollbarGutter: "stable" }}
+              >
+                <h2 className="text-lg font-semibold mb-3">Up Next</h2>
 
-    {upNext.length === 0 ? (
-      <p className="text-sm text-gray-400">No songs in queue. Use shuffle or go back to search.</p>
-    ) : (
-      <div className="space-y-2">
-        {upNext.map((track) => (
-          <button
-            key={track.id + track.title}
-            onClick={ inRoom ? (isRoomOwner ? () => playQueueTrackNow(track) : undefined) : () => openPlayer(track) }
-            className={
-              "w-full flex items-center gap-3 rounded-2xl p-2 text-left " +
-              (inRoom
-                ? isRoomOwner
-                  ? "bg-white/5 hover:bg-white/10"
-                  : "bg-white/5 opacity-70 cursor-not-allowed"
-                : "bg-white/5 hover:bg-white/10")
-            }
-          >
-            <img src={track.image_url} alt={track.title} className="w-10 h-10 rounded-xl object-cover" />
-            <div className="flex-1">
-              <p className="text-xs font-semibold truncate">{track.title}</p>
-              <p className="text-[11px] text-gray-300 truncate">{track.singers}</p>
+                {upNext.length === 0 ? (
+                  <p className="text-sm text-gray-400">
+                    No songs in queue. Use shuffle or go back to search.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {upNext.map((track) => (
+                      <button
+                        key={track.id + track.title}
+                        onClick={
+                          inRoom
+                            ? isRoomOwner
+                              ? () => playQueueTrackNow(track)
+                              : undefined
+                            : () => openPlayer(track)
+                        }
+                        className={
+                          "w-full flex items-center gap-3 rounded-2xl p-2 text-left " +
+                          (inRoom
+                            ? isRoomOwner
+                              ? "bg-white/5 hover:bg-white/10"
+                              : "bg-white/5 opacity-70 cursor-not-allowed"
+                            : "bg-white/5 hover:bg-white/10")
+                        }
+                      >
+                        <img
+                          src={track.image_url}
+                          alt={track.title}
+                          className="w-10 h-10 rounded-xl object-cover"
+                        />
+                        <div className="flex-1">
+                          <p className="text-xs font-semibold truncate">
+                            {track.title}
+                          </p>
+                          <p className="text-[11px] text-gray-300 truncate">
+                            {track.singers}
+                          </p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </button>
-        ))}
-      </div>
-    )}
-  </div>
-</div>
 
-{/* UP NEXT - fixed floating sidebar for desktop (hidden on mobile) */}
-<div
-  className="hidden md:block upnext-scroll"
-  style={{
-    position: "fixed",
-    right: 28,                 // tweak as needed
-    top: 84,                   // tweak as needed (distance from top of viewport)
-    width: 300,                // px - matches md:w-72 / lg:w-80 roughly
-    zIndex: 50,
-    maxHeight: "80vh",
-    overflowY: "auto",
-    scrollbarGutter: "stable"
-  }}
->
-  <div className="bg-black/60 border border-white/10 rounded-3xl p-4 backdrop-blur-xl h-full">
-    <h2 className="text-lg font-semibold mb-3">Up Next</h2>
+            {/* UP NEXT - fixed floating sidebar for desktop (hidden on mobile) */}
+            <div
+              className="hidden md:block upnext-scroll"
+              style={{
+                position: "fixed",
+                right: 28, // tweak as needed
+                top: 84, // tweak as needed (distance from top of viewport)
+                width: 300, // px - matches md:w-72 / lg:w-80 roughly
+                zIndex: 50,
+                maxHeight: "80vh",
+                overflowY: "auto",
+                scrollbarGutter: "stable",
+              }}
+            >
+              <div className="bg-black/60 border border-white/10 rounded-3xl p-4 backdrop-blur-xl h-full">
+                <h2 className="text-lg font-semibold mb-3">Up Next</h2>
 
-    {upNext.length === 0 ? (
-      <p className="text-sm text-gray-400">No songs in queue. Use shuffle or go back to search.</p>
-    ) : (
-      <div className="space-y-2">
-        {upNext.map((track) => (
-          <button
-            key={track.id + track.title}
-            onClick={ inRoom ? (isRoomOwner ? () => playQueueTrackNow(track) : undefined) : () => openPlayer(track) }
-            className={
-              "w-full flex items-center gap-3 rounded-2xl p-2 text-left " +
-              (inRoom
-                ? isRoomOwner
-                  ? "bg-white/5 hover:bg-white/10"
-                  : "bg-white/5 opacity-70 cursor-not-allowed"
-                : "bg-white/5 hover:bg-white/10")
-            }
-          >
-            <img src={track.image_url} alt={track.title} className="w-10 h-10 rounded-xl object-cover" />
-            <div className="flex-1">
-              <p className="text-xs font-semibold truncate">{track.title}</p>
-              <p className="text-[11px] text-gray-300 truncate">{track.singers}</p>
+                {upNext.length === 0 ? (
+                  <p className="text-sm text-gray-400">
+                    No songs in queue. Use shuffle or go back to search.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {upNext.map((track) => (
+                      <button
+                        key={track.id + track.title}
+                        onClick={
+                          inRoom
+                            ? isRoomOwner
+                              ? () => playQueueTrackNow(track)
+                              : undefined
+                            : () => openPlayer(track)
+                        }
+                        className={
+                          "w-full flex items-center gap-3 rounded-2xl p-2 text-left " +
+                          (inRoom
+                            ? isRoomOwner
+                              ? "bg-white/5 hover:bg-white/10"
+                              : "bg-white/5 opacity-70 cursor-not-allowed"
+                            : "bg-white/5 hover:bg-white/10")
+                        }
+                      >
+                        <img
+                          src={track.image_url}
+                          alt={track.title}
+                          className="w-10 h-10 rounded-xl object-cover"
+                        />
+                        <div className="flex-1">
+                          <p className="text-xs font-semibold truncate">
+                            {track.title}
+                          </p>
+                          <p className="text-[11px] text-gray-300 truncate">
+                            {track.singers}
+                          </p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </button>
-        ))}
-      </div>
-    )}
-  </div>
-</div>
-
           </div>
         </div>
       )}
-      {/* Hidden YouTube player – audio only, works for mini player too */}
-      {isYouTube && (
-        <div className="fixed -z-50 opacity-0 pointer-events-none">
-          <div id="yt-player" />
-        </div>
-      )}
+      {/* Keep YT player mounted (hidden) so background playback survives UI close */}
+      <div
+        id="yt-player-container"
+        aria-hidden="true"
+        style={{
+          position: "fixed",
+          width: 1,
+          height: 1,
+          left: -9999,
+          top: 0,
+          opacity: 0,
+          pointerEvents: "none",
+          zIndex: -1,
+        }}
+      >
+        <div id="yt-player" />
+      </div>
 
       {/* 🔔 Global in-app toast */}
       {toast && (
