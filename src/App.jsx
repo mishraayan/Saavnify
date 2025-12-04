@@ -2899,7 +2899,6 @@ function stopProgressTimer() {
     async (track, listContext = null) => {
       if (!track || !track.url) return;
 
-      userInitiatedPlay.current = true;
       // 🎬 1) YOUTUBE TRACKS
       if (track.source === "yt") {
         if (inRoom) {
