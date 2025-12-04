@@ -1855,261 +1855,36 @@ function MusicApp({ user, onLogout }) {
 
     let playerInstance = null;
     let cancelled = false;
-
-    function startProgressTimer(player) {
-      if (ytProgressTimerRef.current) {
-        clearInterval(ytProgressTimerRef.current);
-      }
-
-      ytProgressTimerRef.current = setInterval(() => {
-        if (!player || typeof player.getCurrentTime !== "function") return;
-
-        const t = player.getCurrentTime() || 0;
-        const d = player.getDuration();
-
-        if (d && d > 0) {
-          setProgress((t / d) * 100);
-        }
-
-        // 🎤 karaoke sync using refs
-        const lyrics = syncedLyricsRef.current;
-        if (lyrics && lyrics.length > 0) {
-          const currentIdx = currentLyricIndexRef.current;
-
-          const idx = lyrics.findIndex((line, i) => {
-            const nextTime =
-              i === lyrics.length - 1 ? Infinity : lyrics[i + 1].time;
-            return t >= line.time && t < nextTime;
-          });
-
-          if (idx !== -1 && idx !== currentIdx) {
-            setCurrentLyricIndex(idx);
-          }
-        }
-      }, 500);
+function stopProgressTimer() {
+    if (ytProgressTimerRef.current) {
+      clearInterval(ytProgressTimerRef.current);
+      ytProgressTimerRef.current = null;
     }
+  }
+ function startProgressTimer(player) {
+  stopProgressTimer(); // single place to clear
 
-    // Add a top-level flag (in component scope)
-    let userInitiatedPlay = false; // set this true when user presses Play (one-time user gesture)
+  ytProgressTimerRef.current = setInterval(() => {
+    if (!player || typeof player.getCurrentTime !== "function") return;
 
-    // Improved createPlayer
-    function createPlayer() {
-      if (cancelled) return;
+    const t = player.getCurrentTime() || 0;
+    const d = player.getDuration();
+    if (d && d > 0) setProgress((t / d) * 100);
 
-      // If player already exists, just load the new id (prefer load over recreate)
-      if (
-        playerInstance &&
-        typeof playerInstance.loadVideoById === "function"
-      ) {
-        try {
-          // if user initiated play, start playing; otherwise cue the video
-          if (userInitiatedPlay) {
-            playerInstance.loadVideoById(currentTrack.id);
-            playerInstance.playVideo();
-          } else {
-            playerInstance.cueVideoById(currentTrack.id);
-          }
-        } catch (err) {
-          console.warn("Failed to reuse YT player — recreating", err);
-          // fallthrough to recreate below
-          try {
-            playerInstance.destroy();
-          } catch {
-            //
-          }
-          playerInstance = null;
-        }
-        return;
-      }
-
-      // Create fresh player
-      playerInstance = new window.YT.Player("yt-player", {
-        videoId: currentTrack.id,
-        playerVars: {
-          // keep autoplay=0 and let onReady userInitiatedPlay decide
-          autoplay: 0,
-          controls: 0,
-          rel: 0,
-          modestbranding: 1,
-          playsinline: 1,
-          enablejsapi: 1,
-          origin: window.location.origin,
-          widget_referrer: window.location.origin,
-          html5: 1,
-          wmode: "transparent",
-        },
-        events: {
-          onReady: async (e) => {
-            if (cancelled) return;
-            ytPlayerRef.current = e.target;
-
-            // Ensure iframe 'allow' attributes exist (some browsers require this)
-            try {
-              const iframe = document.querySelector("#yt-player iframe");
-              if (iframe) {
-                iframe.setAttribute(
-                  "allow",
-                  "autoplay; encrypted-media; picture-in-picture"
-                );
-                iframe.setAttribute("allowfullscreen", "");
-              }
-            } catch (err) {
-              console.warn("Could not set iframe allow attrs", err);
-            }
-
-            // mediaSession is good — you already populate metadata
-            if ("mediaSession" in navigator) {
-              navigator.mediaSession.metadata = new MediaMetadata({
-                title: currentTrack.title,
-                artist: currentTrack.singers || "YouTube",
-                artwork: [
-                  {
-                    src: currentTrack.image_url,
-                    sizes: "96x96",
-                    type: "image/jpeg",
-                  },
-                  {
-                    src: currentTrack.image_url,
-                    sizes: "128x128",
-                    type: "image/jpeg",
-                  },
-                  {
-                    src: currentTrack.image_url,
-                    sizes: "192x192",
-                    type: "image/jpeg",
-                  },
-                  {
-                    src: currentTrack.image_url,
-                    sizes: "256x256",
-                    type: "image/jpeg",
-                  },
-                  {
-                    src: currentTrack.image_url,
-                    sizes: "384x384",
-                    type: "image/jpeg",
-                  },
-                  {
-                    src: currentTrack.image_url,
-                    sizes: "512x512",
-                    type: "image/jpeg",
-                  },
-                ],
-              });
-
-              navigator.mediaSession.setActionHandler("play", () =>
-                e.target.playVideo()
-              );
-              navigator.mediaSession.setActionHandler("pause", () =>
-                e.target.pauseVideo()
-              );
-              navigator.mediaSession.setActionHandler("previoustrack", () =>
-                playPrev?.()
-              );
-              navigator.mediaSession.setActionHandler("nexttrack", () =>
-                playNext?.()
-              );
-              navigator.mediaSession.setActionHandler("seekbackward", () =>
-                e.target.seekTo(e.target.getCurrentTime() - 10)
-              );
-              navigator.mediaSession.setActionHandler("seekforward", () =>
-                e.target.seekTo(e.target.getCurrentTime() + 10)
-              );
-            }
-
-            // resume last time if present
-            if (ytLastTime > 0) {
-              try {
-                e.target.seekTo(ytLastTime, true);
-              } catch (err) {
-                console.warn("Failed to seek YT on resume", err);
-              }
-            }
-
-            // Play decision:
-            // - If user initiated this play (userInitiatedPlay true), start playing.
-            // - Otherwise cue to be ready (no autoplay; user can press play).
-            try {
-              if (userInitiatedPlay) {
-                // Try a normal play first
-                await tryPlay(e.target);
-              } else {
-                // prepare the player without starting playback
-                e.target.cueVideoById(currentTrack.id);
-                setIsPlaying(false);
-              }
-            } catch (err) {
-              console.warn("onReady play/cue error", err);
-            }
-
-            // start progress if playing
-            if (
-              e.target.getPlayerState &&
-              e.target.getPlayerState() === window.YT.PlayerState.PLAYING
-            ) {
-              setIsPlaying(true);
-              startProgressTimer(e.target);
-            }
-          },
-
-          onStateChange: (e) => {
-            if (cancelled) return;
-            const state = e.data;
-
-            if (state === window.YT.PlayerState.PLAYING) {
-              setIsPlaying(true);
-              if (ytCanvasRef.current) {
-                try {
-                  ytCanvasRef.current.playVideo();
-                } catch (ERR) {
-                  console.warn(ERR);
-                }
-              }
-              startProgressTimer(e.target);
-            } else if (
-              state === window.YT.PlayerState.PAUSED ||
-              state === window.YT.PlayerState.ENDED
-            ) {
-              setIsPlaying(false);
-              if (ytCanvasRef.current) {
-                try {
-                  ytCanvasRef.current.pauseVideo();
-                } catch (ERR) {
-                  console.warn(ERR);
-                }
-              }
-            }
-
-            if (state === window.YT.PlayerState.ENDED) {
-              if (repeat) {
-                try {
-                  e.target.seekTo(0, true);
-                  e.target.playVideo();
-                } catch (err) {
-                  console.warn("Failed to loop", err);
-                }
-              } else {
-                playNext();
-              }
-            }
-          },
-
-          onError: (e) => {
-            console.warn("YT player error", e);
-            // optional: fallback to muted play (often allowed)
-            try {
-              const p = playerInstance;
-              if (p && typeof p.mute === "function") {
-                p.mute();
-                tryPlay(p).catch(() => {});
-              }
-            } catch {
-              //
-            }
-          },
-        },
+    // karaoke sync (keep your logic)
+    const lyrics = syncedLyricsRef.current;
+    if (lyrics && lyrics.length > 0) {
+      const currentIdx = currentLyricIndexRef.current;
+      const idx = lyrics.findIndex((line, i) => {
+        const nextTime = i === lyrics.length - 1 ? Infinity : lyrics[i + 1].time;
+        return t >= line.time && t < nextTime;
       });
+      if (idx !== -1 && idx !== currentIdx) setCurrentLyricIndex(idx);
+    }
+  }, 500);
+}
 
-      // helper to try play, with fallback to muted play if needed
+ // helper to try play, with fallback to muted play if needed
       async function tryPlay(player) {
         return new Promise((resolve, reject) => {
           try {
@@ -2137,7 +1912,101 @@ function MusicApp({ user, onLogout }) {
           }
         });
       }
+
+    // Improved createPlayer
+    function createPlayer() {
+    if (cancelled) return;
+
+    if (playerInstance && typeof playerInstance.loadVideoById === "function") {
+      try {
+        if (userInitiatedPlay.current) {
+          playerInstance.loadVideoById(currentTrack.id);
+          playerInstance.playVideo();
+        } else {
+          playerInstance.cueVideoById(currentTrack.id);
+        }
+      } catch (err) {
+        console.warn("Failed to reuse YT player — recreating", err);
+        try { playerInstance.destroy(); } catch {
+          //
+        }
+        playerInstance = null;
+      }
+      return;
     }
+
+       playerInstance = new window.YT.Player("yt-player", {
+      videoId: currentTrack.id,
+      playerVars: { autoplay: 0, controls: 0, rel: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1, origin: window.location.origin, html5: 1, wmode: "transparent" },
+      events: {
+        onReady: async (e) => {
+          if (cancelled) return;
+          ytPlayerRef.current = e.target;
+
+          try {
+            const iframe = document.querySelector("#yt-player iframe");
+            if (iframe) {
+              iframe.setAttribute("allow", "autoplay; encrypted-media; picture-in-picture");
+              iframe.setAttribute("allowfullscreen", "");
+            }
+          } catch (err) { console.warn("Could not set iframe allow attrs", err); }
+
+          // mediaSession metadata + action handlers (keep your existing block)
+
+          if (ytLastTime > 0) {
+            try { e.target.seekTo(ytLastTime, true); } catch (err) { console.warn("Failed to seek YT on resume", err); }
+          }
+
+          try {
+            if (userInitiatedPlay.current) {
+              await tryPlay(e.target);
+            } else {
+              e.target.cueVideoById(currentTrack.id);
+              setIsPlaying(false);
+            }
+          } catch (err) { console.warn("onReady play/cue error", err); }
+
+          if (e.target.getPlayerState && e.target.getPlayerState() === window.YT.PlayerState.PLAYING) {
+            setIsPlaying(true);
+            startProgressTimer(e.target);
+            userInitiatedPlay.current = false;
+          }
+        },
+
+        onStateChange: (e) => {
+          if (cancelled) return;
+          const state = e.data;
+          if (state === window.YT.PlayerState.PLAYING) {
+            setIsPlaying(true);
+            if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
+            startProgressTimer(e.target);
+            userInitiatedPlay.current = false;
+          } else if (state === window.YT.PlayerState.PAUSED || state === window.YT.PlayerState.ENDED) {
+            setIsPlaying(false);
+            if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
+            stopProgressTimer();
+          }
+
+          if (state === window.YT.PlayerState.ENDED) {
+            if (repeat) {
+              try { e.target.seekTo(0, true); e.target.playVideo(); } catch (err) { console.warn("Failed to loop", err); }
+            } else playNext();
+          }
+        },
+
+        onError: (e) => {
+          console.warn("YT player error", e);
+          try {
+            const p = playerInstance;
+            if (p && typeof p.mute === "function") { p.mute(); tryPlay(p).catch(()=>{}); }
+          } catch {
+            //
+          }
+        },
+      }
+    });
+  }
+
 
     function onYouTubeIframeAPIReady() {
       if (cancelled) return;
@@ -2156,18 +2025,11 @@ function MusicApp({ user, onLogout }) {
     }
 
     return () => {
-      cancelled = true;
-
-      if (ytProgressTimerRef.current) {
-        clearInterval(ytProgressTimerRef.current);
-        ytProgressTimerRef.current = null;
-      }
-
-      if (playerInstance && playerInstance.destroy) {
-        playerInstance.destroy();
-      }
-      ytPlayerRef.current = null;
-    };
+    cancelled = true;
+    stopProgressTimer();
+    if (playerInstance && playerInstance.destroy) playerInstance.destroy();
+    ytPlayerRef.current = null;
+  };
   }, [isYouTube, currentTrack, repeat, ytLastTime]);
 
   // 🎥 Canvas background video for YT – loop middle 6 seconds, muted
