@@ -431,7 +431,7 @@ function SearchScreen({
   setSearchQuery,
   searchSongs,
   tracks,
-  handleUserPlayClick,
+  openPlayer,
   loading,
   suggestions = [],
   showSuggestions = false,
@@ -552,7 +552,7 @@ function SearchScreen({
           {tracks.map((track) => (
             <div
               key={track.id + track.title}
-              onClick={() => handleUserPlayClick(track, tracks)}
+              onClick={() => openPlayer(track, tracks)}
               className="cursor-pointer group relative rounded-2xl overflow-hidden shadow-xl bg-black/40 border border-white/10 hover:-translate-y-1 hover:scale-[1.02] transition"
             >
               <div className="relative w-full aspect-square overflow-hidden">
@@ -1018,7 +1018,6 @@ function MusicApp({ user, onLogout }) {
   const ytPlayerRef = useRef(null);
   const [showCanvas, setShowCanvas] = useState(false);
   const ytCanvasRef = useRef(null);
-  const userInitiatedPlay = useRef(false);
   const [theme, setTheme] = useState(
     getHashThemeForTrack(null) // default fallback
   );
@@ -1855,158 +1854,175 @@ function MusicApp({ user, onLogout }) {
 
     let playerInstance = null;
     let cancelled = false;
-function stopProgressTimer() {
-    if (ytProgressTimerRef.current) {
-      clearInterval(ytProgressTimerRef.current);
-      ytProgressTimerRef.current = null;
+
+    function startProgressTimer(player) {
+      if (ytProgressTimerRef.current) {
+        clearInterval(ytProgressTimerRef.current);
+      }
+
+      ytProgressTimerRef.current = setInterval(() => {
+        if (!player || typeof player.getCurrentTime !== "function") return;
+
+        const t = player.getCurrentTime() || 0;
+        const d = player.getDuration();
+
+        if (d && d > 0) {
+          setProgress((t / d) * 100);
+        }
+
+        // 🎤 karaoke sync using refs
+        const lyrics = syncedLyricsRef.current;
+        if (lyrics && lyrics.length > 0) {
+          const currentIdx = currentLyricIndexRef.current;
+
+          const idx = lyrics.findIndex((line, i) => {
+            const nextTime =
+              i === lyrics.length - 1 ? Infinity : lyrics[i + 1].time;
+            return t >= line.time && t < nextTime;
+          });
+
+          if (idx !== -1 && idx !== currentIdx) {
+            setCurrentLyricIndex(idx);
+          }
+        }
+      }, 500);
     }
-  }
- function startProgressTimer(player) {
-  stopProgressTimer(); // single place to clear
 
-  ytProgressTimerRef.current = setInterval(() => {
-    if (!player || typeof player.getCurrentTime !== "function") return;
+    function createPlayer() {
+      if (cancelled) return;
 
-    const t = player.getCurrentTime() || 0;
-    const d = player.getDuration();
-    if (d && d > 0) setProgress((t / d) * 100);
+      playerInstance = new window.YT.Player("yt-player", {
+        videoId: currentTrack.id,
+        playerVars: {
+          autoplay: 1,
+          controls: 0,
+          rel: 0,
+          modestbranding: 1,
+          playsinline: 1, // ← YE DAAL
+          enablejsapi: 1, // ← YE BHI DAAL (already hai par confirm)
+          origin: window.location.origin,
+          widget_referrer: window.location.origin, // YE ADD KAR (PWA background ke liye)
+          html5: 1, // YE ADD KAR (HTML5 mode force)
+          wmode: "transparent", // YE ADD KAR (overlay issues fix)
+        },
+        events: {
+          onReady: (e) => {
+            if (cancelled) return;
+            ytPlayerRef.current = e.target;
+            if ("mediaSession" in navigator) {
+              navigator.mediaSession.metadata = new MediaMetadata({
+                title: currentTrack.title,
+                artist: currentTrack.singers || "YouTube",
+                artwork: [
+                  {
+                    src: currentTrack.image_url,
+                    sizes: "96x96",
+                    type: "image/jpeg",
+                  },
+                  {
+                    src: currentTrack.image_url,
+                    sizes: "128x128",
+                    type: "image/jpeg",
+                  },
+                  {
+                    src: currentTrack.image_url,
+                    sizes: "192x192",
+                    type: "image/jpeg",
+                  },
+                  {
+                    src: currentTrack.image_url,
+                    sizes: "256x256",
+                    type: "image/jpeg",
+                  },
+                  {
+                    src: currentTrack.image_url,
+                    sizes: "384x384",
+                    type: "image/jpeg",
+                  },
+                  {
+                    src: currentTrack.image_url,
+                    sizes: "512x512",
+                    type: "image/jpeg",
+                  },
+                ],
+              });
 
-    // karaoke sync (keep your logic)
-    const lyrics = syncedLyricsRef.current;
-    if (lyrics && lyrics.length > 0) {
-      const currentIdx = currentLyricIndexRef.current;
-      const idx = lyrics.findIndex((line, i) => {
-        const nextTime = i === lyrics.length - 1 ? Infinity : lyrics[i + 1].time;
-        return t >= line.time && t < nextTime;
-      });
-      if (idx !== -1 && idx !== currentIdx) setCurrentLyricIndex(idx);
-    }
-  }, 500);
-}
+              navigator.mediaSession.setActionHandler("play", () =>
+                e.target.playVideo()
+              );
+              navigator.mediaSession.setActionHandler("pause", () =>
+                e.target.pauseVideo()
+              );
+              navigator.mediaSession.setActionHandler("previoustrack", () =>
+                playPrev?.()
+              );
+              navigator.mediaSession.setActionHandler("nexttrack", () =>
+                playNext?.()
+              );
+              navigator.mediaSession.setActionHandler("seekbackward", () =>
+                e.target.seekTo(e.target.getCurrentTime() - 10)
+              );
+              navigator.mediaSession.setActionHandler("seekforward", () =>
+                e.target.seekTo(e.target.getCurrentTime() + 10)
+              );
+            }
 
- // helper to try play, with fallback to muted play if needed
-      async function tryPlay(player) {
-        return new Promise((resolve, reject) => {
-          try {
-            const doPlay = () => {
+            if (ytLastTime > 0) {
               try {
-                const ret = player.playVideo();
-                // playVideo() does not return a promise; so resolve immediately and rely on onStateChange
-                resolve(ret);
+                e.target.seekTo(ytLastTime, true);
               } catch (err) {
-                // try muted autoplay as fallback
+                console.warn("Failed to seek YT on resume", err);
+              }
+            }
+
+            e.target.playVideo();
+            setIsPlaying(true);
+            startProgressTimer(e.target);
+          },
+          onStateChange: (e) => {
+            if (cancelled) return;
+
+            const state = e.data;
+
+            if (state === window.YT.PlayerState.PLAYING) {
+              setIsPlaying(true);
+
+              // 🔄 keep canvas in sync → play
+              if (ytCanvasRef.current) {
                 try {
-                  player.mute();
-                  player.playVideo();
-                  resolve();
-                } catch (err2) {
-                  reject(err2 || err);
+                  ytCanvasRef.current.playVideo();
+                } catch (ERR) {
+                  console.warn(ERR);
                 }
               }
-            };
-
-            // some browsers require a short timeout after ready
-            setTimeout(doPlay, 50);
-          } catch (err) {
-            reject(err);
-          }
-        });
-      }
-
-    // Improved createPlayer
-    function createPlayer() {
-    if (cancelled) return;
-
-    if (playerInstance && typeof playerInstance.loadVideoById === "function") {
-      try {
-        if (userInitiatedPlay.current) {
-          playerInstance.loadVideoById(currentTrack.id);
-          playerInstance.playVideo();
-        } else {
-          playerInstance.cueVideoById(currentTrack.id);
-        }
-      } catch (err) {
-        console.warn("Failed to reuse YT player — recreating", err);
-        try { playerInstance.destroy(); } catch {
-          //
-        }
-        playerInstance = null;
-      }
-      return;
-    }
-
-       playerInstance = new window.YT.Player("yt-player", {
-      videoId: currentTrack.id,
-      playerVars: { autoplay: 0, controls: 0, rel: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1, origin: window.location.origin, html5: 1, wmode: "transparent" },
-      events: {
-        onReady: async (e) => {
-          if (cancelled) return;
-          ytPlayerRef.current = e.target;
-
-          try {
-            const iframe = document.querySelector("#yt-player iframe");
-            if (iframe) {
-              iframe.setAttribute("allow", "autoplay; encrypted-media; picture-in-picture");
-              iframe.setAttribute("allowfullscreen", "");
-            }
-          } catch (err) { console.warn("Could not set iframe allow attrs", err); }
-
-          // mediaSession metadata + action handlers (keep your existing block)
-
-          if (ytLastTime > 0) {
-            try { e.target.seekTo(ytLastTime, true); } catch (err) { console.warn("Failed to seek YT on resume", err); }
-          }
-
-          try {
-            if (userInitiatedPlay.current) {
-              await tryPlay(e.target);
-            } else {
-              e.target.cueVideoById(currentTrack.id);
+            } else if (
+              state === window.YT.PlayerState.PAUSED ||
+              state === window.YT.PlayerState.ENDED
+            ) {
               setIsPlaying(false);
+
+              // 🔄 keep canvas in sync → pause
+              if (ytCanvasRef.current) {
+                try {
+                  ytCanvasRef.current.pauseVideo();
+                } catch (ERR) {
+                  console.warn(ERR);
+                }
+              }
             }
-          } catch (err) { console.warn("onReady play/cue error", err); }
 
-          if (e.target.getPlayerState && e.target.getPlayerState() === window.YT.PlayerState.PLAYING) {
-            setIsPlaying(true);
-            startProgressTimer(e.target);
-            userInitiatedPlay.current = false;
-          }
+            if (state === window.YT.PlayerState.ENDED) {
+              if (repeat) {
+                e.target.seekTo(0, true);
+                e.target.playVideo();
+              } else {
+                playNext();
+              }
+            }
+          },
         },
-
-        onStateChange: (e) => {
-          if (cancelled) return;
-          const state = e.data;
-          if (state === window.YT.PlayerState.PLAYING) {
-            setIsPlaying(true);
-            if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
-            startProgressTimer(e.target);
-            userInitiatedPlay.current = false;
-          } else if (state === window.YT.PlayerState.PAUSED || state === window.YT.PlayerState.ENDED) {
-            setIsPlaying(false);
-            if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
-            stopProgressTimer();
-          }
-
-          if (state === window.YT.PlayerState.ENDED) {
-            if (repeat) {
-              try { e.target.seekTo(0, true); e.target.playVideo(); } catch (err) { console.warn("Failed to loop", err); }
-            } else playNext();
-          }
-        },
-
-        onError: (e) => {
-          console.warn("YT player error", e);
-          try {
-            const p = playerInstance;
-            if (p && typeof p.mute === "function") { p.mute(); tryPlay(p).catch(()=>{}); }
-          } catch {
-            //
-          }
-        },
-      }
-    });
-  }
-
+      });
+    }
 
     function onYouTubeIframeAPIReady() {
       if (cancelled) return;
@@ -2025,11 +2041,18 @@ function stopProgressTimer() {
     }
 
     return () => {
-    cancelled = true;
-    stopProgressTimer();
-    if (playerInstance && playerInstance.destroy) playerInstance.destroy();
-    ytPlayerRef.current = null;
-  };
+      cancelled = true;
+
+      if (ytProgressTimerRef.current) {
+        clearInterval(ytProgressTimerRef.current);
+        ytProgressTimerRef.current = null;
+      }
+
+      if (playerInstance && playerInstance.destroy) {
+        playerInstance.destroy();
+      }
+      ytPlayerRef.current = null;
+    };
   }, [isYouTube, currentTrack, repeat, ytLastTime]);
 
   // 🎥 Canvas background video for YT – loop middle 6 seconds, muted
@@ -2847,15 +2870,13 @@ function stopProgressTimer() {
   }, []);
 
   useEffect(() => {
-  if (!playLatestOnLoad) return;
-  if (!tracks || tracks.length === 0) return;
+    if (!playLatestOnLoad) return;
+    if (!tracks || tracks.length === 0) return;
 
-  // Instead of auto-starting (which is a non-user gesture), show a UI prompt
-  // so the user can tap to start playback. Example: set a state that shows a banner/button.
-    // show a small "Tap to play latest" UI in your layout
-  setPlayLatestOnLoad(false);
-}, [playLatestOnLoad, tracks]);
-
+    // Auto-play first result
+    openPlayer(tracks[0]);
+    setPlayLatestOnLoad(false);
+  }, [playLatestOnLoad, tracks]);
 
   const playQueueTrackNow = async (track) => {
     if (!inRoom || !roomId || !roomState) return;
@@ -3095,10 +3116,6 @@ function stopProgressTimer() {
       user?.id,
     ]
   );
-  function handleUserPlayClick(track, listContext = null) {
-  userInitiatedPlay.current = true;      // REQUIRED for autoplay/background
-  openPlayer(track, listContext);
-}
   function pickAutoDjNextTrack() {
     if (!currentTrack) return null;
 
@@ -4339,7 +4356,7 @@ function stopProgressTimer() {
                 {displayedTracks.map((track) => (
                   <div
                     key={track.id + track.title}
-                    onClick={() => handleUserPlayClick(track, displayedTracks)}
+                    onClick={() => openPlayer(track, displayedTracks)}
                     className="cursor-pointer group relative rounded-3xl overflow-hidden shadow-2xl bg-black/40 border border-white/10 hover:-translate-y-1 hover:scale-[1.02] transition"
                   >
                     {/* existing card content */}
@@ -5119,140 +5136,95 @@ function stopProgressTimer() {
               </div>
             </div>
 
-            {/* UP NEXT - mobile inline (shows on small screens) */}
-            <div className="block md:hidden w-full max-w-md mx-auto mt-6">
-              <div
-                className="w-full bg-black/60 border border-white/10 rounded-3xl p-4 backdrop-blur-xl max-h-[60vh] overflow-y-auto upnext-scroll"
-                style={{ scrollbarGutter: "stable" }}
-              >
-                <h2 className="text-lg font-semibold mb-3">Up Next</h2>
+          {/* UP NEXT - mobile inline (shows on small screens) */}
+<div className="block md:hidden w-full max-w-md mx-auto mt-6">
+  <div className="w-full bg-black/60 border border-white/10 rounded-3xl p-4 backdrop-blur-xl max-h-[60vh] overflow-y-auto upnext-scroll" style={{ scrollbarGutter: "stable" }}>
+    <h2 className="text-lg font-semibold mb-3">Up Next</h2>
 
-                {upNext.length === 0 ? (
-                  <p className="text-sm text-gray-400">
-                    No songs in queue. Use shuffle or go back to search.
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {upNext.map((track) => (
-                      <button
-                        key={track.id + track.title}
-                        onClick={
-                          inRoom
-                            ? isRoomOwner
-                              ? () => playQueueTrackNow(track)
-                              : undefined
-                            : () => handleUserPlayClick(track)
-                        }
-                        className={
-                          "w-full flex items-center gap-3 rounded-2xl p-2 text-left " +
-                          (inRoom
-                            ? isRoomOwner
-                              ? "bg-white/5 hover:bg-white/10"
-                              : "bg-white/5 opacity-70 cursor-not-allowed"
-                            : "bg-white/5 hover:bg-white/10")
-                        }
-                      >
-                        <img
-                          src={track.image_url}
-                          alt={track.title}
-                          className="w-10 h-10 rounded-xl object-cover"
-                        />
-                        <div className="flex-1">
-                          <p className="text-xs font-semibold truncate">
-                            {track.title}
-                          </p>
-                          <p className="text-[11px] text-gray-300 truncate">
-                            {track.singers}
-                          </p>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+    {upNext.length === 0 ? (
+      <p className="text-sm text-gray-400">No songs in queue. Use shuffle or go back to search.</p>
+    ) : (
+      <div className="space-y-2">
+        {upNext.map((track) => (
+          <button
+            key={track.id + track.title}
+            onClick={ inRoom ? (isRoomOwner ? () => playQueueTrackNow(track) : undefined) : () => openPlayer(track) }
+            className={
+              "w-full flex items-center gap-3 rounded-2xl p-2 text-left " +
+              (inRoom
+                ? isRoomOwner
+                  ? "bg-white/5 hover:bg-white/10"
+                  : "bg-white/5 opacity-70 cursor-not-allowed"
+                : "bg-white/5 hover:bg-white/10")
+            }
+          >
+            <img src={track.image_url} alt={track.title} className="w-10 h-10 rounded-xl object-cover" />
+            <div className="flex-1">
+              <p className="text-xs font-semibold truncate">{track.title}</p>
+              <p className="text-[11px] text-gray-300 truncate">{track.singers}</p>
             </div>
+          </button>
+        ))}
+      </div>
+    )}
+  </div>
+</div>
 
-            {/* UP NEXT - fixed floating sidebar for desktop (hidden on mobile) */}
-            <div
-              className="hidden md:block upnext-scroll"
-              style={{
-                position: "fixed",
-                right: 28, // tweak as needed
-                top: 84, // tweak as needed (distance from top of viewport)
-                width: 300, // px - matches md:w-72 / lg:w-80 roughly
-                zIndex: 50,
-                maxHeight: "80vh",
-                overflowY: "auto",
-                scrollbarGutter: "stable",
-              }}
-            >
-              <div className="bg-black/60 border border-white/10 rounded-3xl p-4 backdrop-blur-xl h-full">
-                <h2 className="text-lg font-semibold mb-3">Up Next</h2>
+{/* UP NEXT - fixed floating sidebar for desktop (hidden on mobile) */}
+<div
+  className="hidden md:block upnext-scroll"
+  style={{
+    position: "fixed",
+    right: 28,                 // tweak as needed
+    top: 84,                   // tweak as needed (distance from top of viewport)
+    width: 300,                // px - matches md:w-72 / lg:w-80 roughly
+    zIndex: 50,
+    maxHeight: "80vh",
+    overflowY: "auto",
+    scrollbarGutter: "stable"
+  }}
+>
+  <div className="bg-black/60 border border-white/10 rounded-3xl p-4 backdrop-blur-xl h-full">
+    <h2 className="text-lg font-semibold mb-3">Up Next</h2>
 
-                {upNext.length === 0 ? (
-                  <p className="text-sm text-gray-400">
-                    No songs in queue. Use shuffle or go back to search.
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {upNext.map((track) => (
-                      <button
-                        key={track.id + track.title}
-                        onClick={
-                          inRoom
-                            ? isRoomOwner
-                              ? () => playQueueTrackNow(track)
-                              : undefined
-                            : () => handleUserPlayClick(track)
-                        }
-                        className={
-                          "w-full flex items-center gap-3 rounded-2xl p-2 text-left " +
-                          (inRoom
-                            ? isRoomOwner
-                              ? "bg-white/5 hover:bg-white/10"
-                              : "bg-white/5 opacity-70 cursor-not-allowed"
-                            : "bg-white/5 hover:bg-white/10")
-                        }
-                      >
-                        <img
-                          src={track.image_url}
-                          alt={track.title}
-                          className="w-10 h-10 rounded-xl object-cover"
-                        />
-                        <div className="flex-1">
-                          <p className="text-xs font-semibold truncate">
-                            {track.title}
-                          </p>
-                          <p className="text-[11px] text-gray-300 truncate">
-                            {track.singers}
-                          </p>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+    {upNext.length === 0 ? (
+      <p className="text-sm text-gray-400">No songs in queue. Use shuffle or go back to search.</p>
+    ) : (
+      <div className="space-y-2">
+        {upNext.map((track) => (
+          <button
+            key={track.id + track.title}
+            onClick={ inRoom ? (isRoomOwner ? () => playQueueTrackNow(track) : undefined) : () => openPlayer(track) }
+            className={
+              "w-full flex items-center gap-3 rounded-2xl p-2 text-left " +
+              (inRoom
+                ? isRoomOwner
+                  ? "bg-white/5 hover:bg-white/10"
+                  : "bg-white/5 opacity-70 cursor-not-allowed"
+                : "bg-white/5 hover:bg-white/10")
+            }
+          >
+            <img src={track.image_url} alt={track.title} className="w-10 h-10 rounded-xl object-cover" />
+            <div className="flex-1">
+              <p className="text-xs font-semibold truncate">{track.title}</p>
+              <p className="text-[11px] text-gray-300 truncate">{track.singers}</p>
             </div>
+          </button>
+        ))}
+      </div>
+    )}
+  </div>
+</div>
+
           </div>
         </div>
       )}
-      {/* Keep YT player mounted (hidden) so background playback survives UI close */}
-      <div
-        id="yt-player-container"
-        aria-hidden="true"
-        style={{
-          position: "fixed",
-          width: 1,
-          height: 1,
-          left: -9999,
-          top: 0,
-          opacity: 0,
-          pointerEvents: "none",
-          zIndex: -1,
-        }}
-      >
-        <div id="yt-player" />
-      </div>
+      {/* Hidden YouTube player – audio only, works for mini player too */}
+      {isYouTube && (
+        <div className="fixed -z-50 opacity-0 pointer-events-none">
+          <div id="yt-player" />
+        </div>
+      )}
 
       {/* 🔔 Global in-app toast */}
       {toast && (
